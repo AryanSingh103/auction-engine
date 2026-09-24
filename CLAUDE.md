@@ -70,7 +70,7 @@ Enforce these with database constraints and explicit mechanisms, not hopeful app
 
 At the end of each milestone:
 - An **adversarial-review subagent** reviews the work as a skeptical senior backend engineer. It hunts for race conditions, concurrency bugs, missing error handling, unhandled failure modes, resource leaks, and any path that violates an invariant, and it tries to construct a specific breaking interleaving. It reports findings ranked by severity. Don't defend the code: fix what is real (each fix its own commit), and report what was dismissed and why.
-- An **interview-questions subagent** reads the milestone's diff and writes 5 senior-level questions. The owner gets them **without answers**, answers them, and is then told where they were wrong or vague. Never skip this.
+- An **interview-questions subagent** reads the milestone's diff and writes 5 senior-level questions. Save them, **without answers**, to `docs/interview/mN-questions.md` and commit them. Never skip this. The owner answers whenever they choose, and unanswered questions **do not block** the next milestone. When answers arrive, grade them and say where they were wrong or vague.
 
 A milestone is done only when all of these hold:
 - All tests pass, and `go test -race ./...` is clean.
@@ -116,7 +116,7 @@ The API does not connect to Postgres yet. Compose runs Postgres, but the pgx wir
 
 ## Current status
 
-**Milestone 0 is complete (2026-09-24).** The adversarial review ran and its real findings are fixed. Deferred findings are R11–R13 in `docs/open-questions.md`. The owner still has to answer the 5 interview questions in `docs/interview/m0-questions.md`; grade those answers before starting M1 planning. **Next: plan milestone 1** (settle R1, R5, R6 and R7 in that plan).
+**Milestone 0 is complete (2026-09-24).** The adversarial review ran and its real findings are fixed. Deferred findings are R11–R13 in `docs/open-questions.md`. Its interview questions are in `docs/interview/m0-questions.md`, for the owner to answer when they choose. **Next: plan milestone 1** (settle R1, R5, R6 and R7 in that plan).
 
 Notes for whoever picks this up:
 - `make run` sources `.env` in the shell. The compose `api` service gets an explicit variable list, not the whole `.env`, and always listens on `:8080` inside the container.
