@@ -38,7 +38,7 @@ Updated 2026-09-24. This replaces rules 2 and 4 of the brief.
 6. **If something asked for is a bad idea, say so directly.**
 7. **Record every significant decision** in `docs/decisions/NNN-short-title.md`, covering context, decision, alternatives considered, and consequences. Keep each under 200 words.
 8. **Assume every line will be asked about in an interview.**
-9. **Plan mode first.** Each milestone starts in plan mode, and the owner approves the plan. Before presenting a plan, verify versions, image tags and paths against live sources rather than memory.
+9. **Plan, then go.** Since 2026-09-24 (M3), the owner has waived the plan-approval round trip because their time is limited. State the milestone plan in a few lines and start immediately, without waiting for approval. Every commit must leave the repo buildable and green, and be pushed, so nothing is lost if work stops mid-milestone. Before presenting a plan, verify versions, image tags and paths against live sources rather than memory.
 
 ## Honesty rules (these matter more than anything else)
 
