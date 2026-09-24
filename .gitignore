@@ -1,0 +1,13 @@
+# Local environment. Holds real values; .env.example is the committed template.
+.env
+
+# Build output
+/bin/
+
+# Test and coverage artifacts
+coverage.out
+*.test
+
+# OS and editor files
+.DS_Store
+.vscode/
