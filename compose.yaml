@@ -32,10 +32,26 @@ services:
 
   api:
     build: .
-    env_file: .env
+    # An explicit list instead of env_file: .env, so the API receives only
+    # its own settings (not POSTGRES_PASSWORD, which it does not need yet).
+    environment:
+      # Fixed inside the container: it must match the container side of the
+      # port mapping below. HTTP_ADDR in .env only applies to `make run`.
+      HTTP_ADDR: ":8080"
+      LOG_LEVEL: ${LOG_LEVEL:?set LOG_LEVEL in .env}
+      SHUTDOWN_TIMEOUT: ${SHUTDOWN_TIMEOUT:?set SHUTDOWN_TIMEOUT in .env}
+      HTTP_READ_HEADER_TIMEOUT: ${HTTP_READ_HEADER_TIMEOUT:?set HTTP_READ_HEADER_TIMEOUT in .env}
+      HTTP_READ_TIMEOUT: ${HTTP_READ_TIMEOUT:?set HTTP_READ_TIMEOUT in .env}
+      HTTP_WRITE_TIMEOUT: ${HTTP_WRITE_TIMEOUT:?set HTTP_WRITE_TIMEOUT in .env}
+      HTTP_IDLE_TIMEOUT: ${HTTP_IDLE_TIMEOUT:?set HTTP_IDLE_TIMEOUT in .env}
     ports:
-      # Container side is 8080 because .env.example sets HTTP_ADDR=:8080.
       - "127.0.0.1:${APP_HOST_PORT:?set APP_HOST_PORT in .env}:8080"
+    # Hardening that costs nothing with a static binary: no writes to the
+    # image filesystem, no Linux capabilities, no privilege escalation via
+    # setuid binaries.
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
     # Must exceed SHUTDOWN_TIMEOUT (15s in .env.example), otherwise docker
     # sends SIGKILL while the app is still draining requests.
     stop_grace_period: 20s
