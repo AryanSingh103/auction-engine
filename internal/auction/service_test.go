@@ -61,6 +61,14 @@ func seed(t *testing.T, pool *pgxpool.Pool, n int, endExpr string) int64 {
 	return id
 }
 
+// forEachLocking runs a correctness test once per bid-path strategy: the
+// invariants must hold for both.
+func forEachLocking(t *testing.T, test func(*testing.T, auction.Locking)) {
+	for _, l := range []auction.Locking{auction.LockingPessimistic, auction.LockingOptimistic} {
+		t.Run(string(l), func(t *testing.T) { test(t, l) })
+	}
+}
+
 func assertInvariants(t *testing.T, pool *pgxpool.Pool) {
 	t.Helper()
 	violations, err := invariants.Run(t.Context(), pool)
@@ -80,11 +88,14 @@ func assertInvariants(t *testing.T, pool *pgxpool.Pool) {
 // every rejection must be "too low". A lost update (two bids both accepted
 // against the same previous price) would show up as a broken chain, a head
 // that is not the maximum, or an invariant violation.
-func TestConcurrentBidsNoLostUpdate(t *testing.T) {
+func TestConcurrentBidsNoLostUpdate(t *testing.T) { forEachLocking(t, testConcurrentBidsNoLostUpdate) }
+
+func testConcurrentBidsNoLostUpdate(t *testing.T, locking auction.Locking) {
 	const bidders = 1000
 	pool := server.NewDB(t, 20) // same pool size as .env.example
 	auctionID := seed(t, pool, bidders, "clock_timestamp() + interval '1 hour'")
-	svc := auction.NewService(pool)
+	obs := &recordingObserver{}
+	svc := auction.NewService(pool, auction.WithLocking(locking), auction.WithObserver(obs))
 
 	amounts := make([]int64, bidders)
 	for i := range amounts {
@@ -119,6 +130,7 @@ func TestConcurrentBidsNoLostUpdate(t *testing.T) {
 	elapsed := time.Since(start)
 
 	var accepted []result
+	var contention int
 	for _, r := range results {
 		switch {
 		case errors.Is(r.err, auction.ErrRejectedByDatabaseGuard):
@@ -126,11 +138,19 @@ func TestConcurrentBidsNoLostUpdate(t *testing.T) {
 		case r.err == nil:
 			accepted = append(accepted, r)
 		case errors.Is(r.err, auction.ErrBidTooLow):
+		case locking == auction.LockingOptimistic && errors.Is(r.err, auction.ErrContention):
+			// Ran out of retries: nothing was written; a real client would
+			// retry with the same key. Not a correctness failure.
+			contention++
 		default:
 			t.Errorf("user %d bid %d: unexpected error %v", r.user, r.amount, r.err)
 		}
 	}
-	t.Logf("%d bids in %s: %d accepted, %d rejected as too low", bidders, elapsed, len(accepted), bidders-len(accepted))
+	t.Logf("%s: %d bids in %s: %d accepted, %d contention, %d too low, %d optimistic conflicts",
+		locking, bidders, elapsed, len(accepted), contention, bidders-len(accepted)-contention, obs.conflicts)
+	if locking == auction.LockingOptimistic && obs.conflicts == 0 {
+		t.Fatal("optimistic run saw no conflicts: the retry path was never exercised")
+	}
 
 	// Contention must actually have happened, otherwise this test proves
 	// nothing about concurrency: with random order, far more than one bid
@@ -143,9 +163,19 @@ func TestConcurrentBidsNoLostUpdate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetAuction: %v", err)
 	}
-	maxAmount := int64(startingPrice + (bidders-1)*increment)
+	// The winner is the highest ACCEPTED bid. Under pessimistic locking the
+	// highest submitted bid is always accepted; under optimistic locking it
+	// may have run out of retries (contention), so only the accepted set
+	// counts.
+	maxAmount := int64(0)
+	for _, r := range accepted {
+		maxAmount = max(maxAmount, r.amount)
+	}
+	if locking == auction.LockingPessimistic && maxAmount != int64(startingPrice+(bidders-1)*increment) {
+		t.Errorf("highest accepted bid %d, want the highest submitted %d", maxAmount, startingPrice+(bidders-1)*increment)
+	}
 	if a.Head == nil || a.Head.Price != maxAmount {
-		t.Fatalf("final head = %+v, want price %d (the highest bid)", a.Head, maxAmount)
+		t.Fatalf("final head = %+v, want price %d (the highest accepted bid)", a.Head, maxAmount)
 	}
 	for _, r := range accepted {
 		if r.amount == maxAmount && a.Head.UserID != r.user {
@@ -203,9 +233,13 @@ func walkChain(t *testing.T, pool *pgxpool.Pool, head int64) []int64 {
 // one bid must be written, every call must return that same bid, and all
 // but one must report a replay.
 func TestIdempotentReplayUnderConcurrency(t *testing.T) {
+	forEachLocking(t, testIdempotentReplayUnderConcurrency)
+}
+
+func testIdempotentReplayUnderConcurrency(t *testing.T, locking auction.Locking) {
 	pool := server.NewDB(t, 20)
 	auctionID := seed(t, pool, 1, "clock_timestamp() + interval '1 hour'")
-	svc := auction.NewService(pool)
+	svc := auction.NewService(pool, auction.WithLocking(locking))
 	req := auction.PlaceBidRequest{AuctionID: auctionID, UserID: 1, Amount: 1500, IdempotencyKey: "retry-me"}
 
 	const calls = 100
@@ -258,10 +292,14 @@ func TestIdempotentReplayUnderConcurrency(t *testing.T) {
 }
 
 func TestIdempotencyKeyReuseWithDifferentBid(t *testing.T) {
+	forEachLocking(t, testIdempotencyKeyReuseWithDifferentBid)
+}
+
+func testIdempotencyKeyReuseWithDifferentBid(t *testing.T, locking auction.Locking) {
 	pool := server.NewDB(t, 4)
 	auctionID := seed(t, pool, 1, "clock_timestamp() + interval '1 hour'")
 	other := seed(t, pool, 0, "clock_timestamp() + interval '1 hour'")
-	svc := auction.NewService(pool)
+	svc := auction.NewService(pool, auction.WithLocking(locking))
 	ctx := t.Context()
 
 	if _, _, err := svc.PlaceBid(ctx, auction.PlaceBidRequest{AuctionID: auctionID, UserID: 1, Amount: 1500, IdempotencyKey: "k"}); err != nil {
@@ -279,11 +317,13 @@ func TestIdempotencyKeyReuseWithDifferentBid(t *testing.T) {
 	}
 }
 
-func TestPlaceBidRejections(t *testing.T) {
+func TestPlaceBidRejections(t *testing.T) { forEachLocking(t, testPlaceBidRejections) }
+
+func testPlaceBidRejections(t *testing.T, locking auction.Locking) {
 	pool := server.NewDB(t, 4)
 	open := seed(t, pool, 2, "clock_timestamp() + interval '1 hour'")
 	ended := seed(t, pool, 0, "clock_timestamp() - interval '1 second'")
-	svc := auction.NewService(pool)
+	svc := auction.NewService(pool, auction.WithLocking(locking))
 	ctx := t.Context()
 
 	if _, _, err := svc.PlaceBid(ctx, auction.PlaceBidRequest{AuctionID: open, UserID: 1, Amount: 1000, IdempotencyKey: "a"}); err != nil {
@@ -317,9 +357,13 @@ func TestPlaceBidRejections(t *testing.T) {
 // rejected. If the bid path judged time by now() (transaction start) or by
 // a clock read before the lock wait, it would accept this bid.
 func TestBidWaitingOnLockPastCloseIsRejected(t *testing.T) {
+	forEachLocking(t, testBidWaitingOnLockPastCloseIsRejected)
+}
+
+func testBidWaitingOnLockPastCloseIsRejected(t *testing.T, locking auction.Locking) {
 	pool := server.NewDB(t, 4)
 	auctionID := seed(t, pool, 1, "clock_timestamp() + interval '400 milliseconds'")
-	svc := auction.NewService(pool)
+	svc := auction.NewService(pool, auction.WithLocking(locking))
 	ctx := t.Context()
 
 	// Session A takes the auction row lock, as the closer will in M5.
@@ -375,10 +419,21 @@ func TestBidWaitingOnLockPastCloseIsRejected(t *testing.T) {
 	if !errors.Is(o.err, auction.ErrAuctionEnded) {
 		t.Fatalf("bid that acquired the lock after end_at returned %v, want ErrAuctionEnded", o.err)
 	}
-	// The Go path itself must reject it. If it read the clock before the
-	// lock wait ended, only the database guard would catch the bid.
-	if errors.Is(o.err, auction.ErrRejectedByDatabaseGuard) {
-		t.Fatalf("the Go bid path accepted a bid after end_at; only the database guard caught it: %v", o.err)
+	switch locking {
+	case auction.LockingPessimistic:
+		// The Go path itself must reject it. If it read the clock before
+		// the lock wait ended, only the database guard would catch the bid.
+		if errors.Is(o.err, auction.ErrRejectedByDatabaseGuard) {
+			t.Fatalf("the Go bid path accepted a bid after end_at; only the database guard caught it: %v", o.err)
+		}
+	case auction.LockingOptimistic:
+		// The optimistic path reads the clock before it blocks (it only
+		// blocks at INSERT, inside the guard trigger), so by design the
+		// guard is what rejects it: under this strategy, invariant 4 rests
+		// entirely on the trigger (docs/decisions/014).
+		if !auction.IsExpectedGuardRejection(o.err) {
+			t.Fatalf("optimistic bid after end_at returned %v, want a database-guard rejection", o.err)
+		}
 	}
 	assertInvariants(t, pool)
 }
@@ -388,12 +443,14 @@ func TestBidWaitingOnLockPastCloseIsRejected(t *testing.T) {
 // the ONLY kind of guard rejection, it must still be "auction ended", and no
 // bid may be accepted after end_at. 30 auctions each end 30ms after
 // creation while bids are placed on them back to back.
-func TestBidsAtEndBoundary(t *testing.T) {
+func TestBidsAtEndBoundary(t *testing.T) { forEachLocking(t, testBidsAtEndBoundary) }
+
+func testBidsAtEndBoundary(t *testing.T, locking auction.Locking) {
 	pool := server.NewDB(t, 4)
 	if _, err := pool.Exec(t.Context(), `INSERT INTO users (name) SELECT 'u' || g FROM generate_series(1, 2) g`); err != nil {
 		t.Fatalf("seed users: %v", err)
 	}
-	svc := auction.NewService(pool)
+	svc := auction.NewService(pool, auction.WithLocking(locking))
 	var goRejections, guardRejections int
 	for range 30 {
 		id := seed(t, pool, 0, "clock_timestamp() + interval '30 milliseconds'")
@@ -428,6 +485,7 @@ type recordingObserver struct {
 	outcomes  map[auction.Outcome]int
 	lockWaits int
 	txs       int
+	conflicts int
 }
 
 func (r *recordingObserver) BidOutcome(o auction.Outcome) {
@@ -444,6 +502,7 @@ func (r *recordingObserver) BidTransaction(time.Duration) {
 	r.txs++
 	r.mu.Unlock()
 }
+func (r *recordingObserver) OptimisticConflict() { r.mu.Lock(); r.conflicts++; r.mu.Unlock() }
 
 func TestServiceReportsToObserver(t *testing.T) {
 	pool := server.NewDB(t, 4)
