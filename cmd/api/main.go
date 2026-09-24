@@ -72,7 +72,7 @@ func run() error {
 	srv := &http.Server{
 		Handler: httpapi.NewRouter(httpapi.Options{
 			Logger:         logger,
-			Auctions:       auction.NewService(pool),
+			Auctions:       auction.NewService(pool, auction.WithObserver(m)),
 			Ready:          pool.Ping,
 			RequestTimeout: cfg.RequestTimeout,
 			Metrics:        m.HTTPMiddleware,

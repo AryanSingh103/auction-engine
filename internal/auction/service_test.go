@@ -421,3 +421,64 @@ func TestBidsAtEndBoundary(t *testing.T) {
 	t.Logf("end-of-auction rejections: %d by Go, %d by the database guard", goRejections, guardRejections)
 	assertInvariants(t, pool)
 }
+
+// recordingObserver counts what the bid path reports.
+type recordingObserver struct {
+	mu        sync.Mutex
+	outcomes  map[auction.Outcome]int
+	lockWaits int
+	txs       int
+}
+
+func (r *recordingObserver) BidOutcome(o auction.Outcome) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.outcomes == nil {
+		r.outcomes = map[auction.Outcome]int{}
+	}
+	r.outcomes[o]++
+}
+func (r *recordingObserver) LockWait(time.Duration) { r.mu.Lock(); r.lockWaits++; r.mu.Unlock() }
+func (r *recordingObserver) BidTransaction(time.Duration) {
+	r.mu.Lock()
+	r.txs++
+	r.mu.Unlock()
+}
+
+func TestServiceReportsToObserver(t *testing.T) {
+	pool := server.NewDB(t, 4)
+	auctionID := seed(t, pool, 2, "clock_timestamp() + interval '1 hour'")
+	obs := &recordingObserver{}
+	svc := auction.NewService(pool, auction.WithObserver(obs))
+	ctx := t.Context()
+
+	calls := []auction.PlaceBidRequest{
+		{AuctionID: auctionID, UserID: 1, Amount: 1000, IdempotencyKey: "a"},  // accepted
+		{AuctionID: auctionID, UserID: 1, Amount: 1000, IdempotencyKey: "a"},  // replayed
+		{AuctionID: auctionID, UserID: 2, Amount: 1050, IdempotencyKey: "b"},  // too low
+		{AuctionID: auctionID, UserID: 1, Amount: 5000, IdempotencyKey: "c"},  // self outbid
+		{AuctionID: 999, UserID: 2, Amount: 5000, IdempotencyKey: "d"},        // not found
+		{AuctionID: auctionID, UserID: 99, Amount: 5000, IdempotencyKey: "e"}, // unknown user (no lock taken)
+	}
+	for _, c := range calls {
+		_, _, _ = svc.PlaceBid(ctx, c)
+	}
+
+	want := map[auction.Outcome]int{
+		auction.OutcomeAccepted: 1, auction.OutcomeReplayed: 1, auction.OutcomeTooLow: 1,
+		auction.OutcomeSelfOutbid: 1, auction.OutcomeNotFound: 1, auction.OutcomeUnknownUser: 1,
+	}
+	for o, n := range want {
+		if obs.outcomes[o] != n {
+			t.Errorf("outcome %s reported %d times, want %d (all: %v)", o, obs.outcomes[o], n, obs.outcomes)
+		}
+	}
+	if obs.txs != len(calls) {
+		t.Errorf("%d transactions reported, want %d", obs.txs, len(calls))
+	}
+	// Every call except the unknown user reaches the lock (not-found runs the
+	// locking SELECT, which finds no row).
+	if obs.lockWaits != len(calls)-1 {
+		t.Errorf("%d lock waits reported, want %d", obs.lockWaits, len(calls)-1)
+	}
+}
