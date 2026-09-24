@@ -41,3 +41,23 @@ fmt-check: ## Fail if any file is not gofmt-formatted
 .PHONY: lint
 lint: ## Run golangci-lint (config in .golangci.yml)
 	golangci-lint run ./...
+
+.PHONY: up
+up: ## Build and start the full stack in docker compose, wait until healthy
+	docker compose up -d --build --wait
+
+.PHONY: down
+down: ## Stop the stack (keeps the database volume)
+	docker compose down
+
+.PHONY: logs
+logs: ## Follow logs from all services
+	docker compose logs -f
+
+.PHONY: psql
+psql: ## Open psql inside the postgres container
+	docker compose exec postgres sh -c 'psql -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"'
+
+.PHONY: nuke
+nuke: ## Stop the stack AND delete the database volume (destroys all local data)
+	docker compose down -v
