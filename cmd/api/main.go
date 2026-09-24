@@ -40,8 +40,16 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
+	// Root of every request context. Shutdown never cancels request
+	// contexts on its own; cancelling this one when the drain deadline
+	// passes tells in-flight handlers (DB calls from M1 on) to stop, instead
+	// of leaving them running after their connections are force-closed.
+	requestCtx, cancelRequests := context.WithCancel(context.Background())
+	defer cancelRequests()
+
 	srv := &http.Server{
 		Handler:           httpapi.NewRouter(logger),
+		BaseContext:       func(net.Listener) context.Context { return requestCtx },
 		ReadHeaderTimeout: cfg.HTTPReadHeaderTimeout,
 		ReadTimeout:       cfg.HTTPReadTimeout,
 		WriteTimeout:      cfg.HTTPWriteTimeout,
@@ -91,8 +99,9 @@ func run() error {
 	// Shutdown closes the listener, closes idle connections, and waits for
 	// active requests to finish, or for shutdownCtx to expire.
 	if err := srv.Shutdown(shutdownCtx); err != nil {
-		// Drain timed out: force-close whatever is still open so the process
-		// can exit, and report failure.
+		// Drain timed out: cancel in-flight handlers, force-close whatever
+		// is still open so the process can exit, and report failure.
+		cancelRequests()
 		closeErr := srv.Close()
 		return errors.Join(fmt.Errorf("graceful shutdown: %w", err), closeErr)
 	}
