@@ -240,15 +240,15 @@ func mapDBError(err error) error {
 	}
 	switch pgErr.Code {
 	case "AE001":
-		return fmt.Errorf("%w (database guard)", ErrAuctionNotOpen)
+		return fmt.Errorf("%w: %w", ErrRejectedByDatabaseGuard, ErrAuctionNotOpen)
 	case "AE002":
-		return fmt.Errorf("%w (database guard)", ErrAuctionNotStarted)
+		return fmt.Errorf("%w: %w", ErrRejectedByDatabaseGuard, ErrAuctionNotStarted)
 	case "AE003":
-		return fmt.Errorf("%w (database guard)", ErrAuctionEnded)
+		return fmt.Errorf("%w: %w", ErrRejectedByDatabaseGuard, ErrAuctionEnded)
 	case "AE005":
-		return fmt.Errorf("%w (database guard)", ErrSelfOutbid)
+		return fmt.Errorf("%w: %w", ErrRejectedByDatabaseGuard, ErrSelfOutbid)
 	case "AE006":
-		return fmt.Errorf("%w (database guard)", ErrBidTooLow)
+		return fmt.Errorf("%w: %w", ErrRejectedByDatabaseGuard, ErrBidTooLow)
 	}
 	// AE004 (stale head), AE007 (bid without event) and anything else are
 	// bugs or infrastructure failures, not user errors: pass them through.

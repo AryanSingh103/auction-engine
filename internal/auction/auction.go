@@ -65,6 +65,12 @@ var (
 	ErrBidTooLow         = errors.New("bid is below the minimum")
 	ErrUnknownUser       = errors.New("unknown user")
 	ErrInvalidAmount     = errors.New("bid amount must be positive")
+	// ErrRejectedByDatabaseGuard marks a rejection that the Go rules missed
+	// and the database guard trigger caught. It is always wrapped together
+	// with the specific reason (e.g. ErrAuctionEnded). In correct operation
+	// it never appears; tests assert that, so a regression in the Go bid
+	// path cannot hide behind the backstop.
+	ErrRejectedByDatabaseGuard = errors.New("rejected by database guard")
 	// ErrIdempotencyConflict means the idempotency key was already used by
 	// this user for a different bid (different auction or amount).
 	ErrIdempotencyConflict = errors.New("idempotency key reused with a different request")

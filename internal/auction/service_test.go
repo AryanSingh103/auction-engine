@@ -121,6 +121,8 @@ func TestConcurrentBidsNoLostUpdate(t *testing.T) {
 	var accepted []result
 	for _, r := range results {
 		switch {
+		case errors.Is(r.err, auction.ErrRejectedByDatabaseGuard):
+			t.Errorf("user %d bid %d: the Go bid path missed a rule the database guard caught: %v", r.user, r.amount, r.err)
 		case r.err == nil:
 			accepted = append(accepted, r)
 		case errors.Is(r.err, auction.ErrBidTooLow):
@@ -359,6 +361,11 @@ func TestBidWaitingOnLockPastCloseIsRejected(t *testing.T) {
 	}
 	if !errors.Is(o.err, auction.ErrAuctionEnded) {
 		t.Fatalf("bid that acquired the lock after end_at returned %v, want ErrAuctionEnded", o.err)
+	}
+	// The Go path itself must reject it. If it read the clock before the
+	// lock wait ended, only the database guard would catch the bid.
+	if errors.Is(o.err, auction.ErrRejectedByDatabaseGuard) {
+		t.Fatalf("the Go bid path accepted a bid after end_at; only the database guard caught it: %v", o.err)
 	}
 	assertInvariants(t, pool)
 }
