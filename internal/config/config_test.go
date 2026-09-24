@@ -1,0 +1,133 @@
+package config
+
+import (
+	"log/slog"
+	"strings"
+	"testing"
+	"time"
+)
+
+// validEnv returns a complete, valid environment. Each test case starts from a
+// fresh copy and changes only what it is testing.
+func validEnv() map[string]string {
+	return map[string]string{
+		"HTTP_ADDR":        ":8080",
+		"LOG_LEVEL":        "info",
+		"SHUTDOWN_TIMEOUT": "15s",
+	}
+}
+
+func lookupFrom(env map[string]string) LookupFunc {
+	return func(key string) (string, bool) {
+		v, ok := env[key]
+		return v, ok
+	}
+}
+
+func TestLoad(t *testing.T) {
+	tests := []struct {
+		name string
+		// mutate edits a copy of validEnv. A nil mutate means "use it as is".
+		mutate func(env map[string]string)
+		want   Config
+		// wantErrs lists substrings that must all appear in the error.
+		// Empty means Load must succeed.
+		wantErrs []string
+	}{
+		{
+			name: "valid",
+			want: Config{HTTPAddr: ":8080", LogLevel: slog.LevelInfo, ShutdownTimeout: 15 * time.Second},
+		},
+		{
+			name:   "log level is case-insensitive",
+			mutate: func(env map[string]string) { env["LOG_LEVEL"] = "DEBUG" },
+			want:   Config{HTTPAddr: ":8080", LogLevel: slog.LevelDebug, ShutdownTimeout: 15 * time.Second},
+		},
+		{
+			name:     "missing HTTP_ADDR",
+			mutate:   func(env map[string]string) { delete(env, "HTTP_ADDR") },
+			wantErrs: []string{"HTTP_ADDR: required but not set"},
+		},
+		{
+			name:     "missing LOG_LEVEL",
+			mutate:   func(env map[string]string) { delete(env, "LOG_LEVEL") },
+			wantErrs: []string{"LOG_LEVEL: required but not set"},
+		},
+		{
+			name:     "missing SHUTDOWN_TIMEOUT",
+			mutate:   func(env map[string]string) { delete(env, "SHUTDOWN_TIMEOUT") },
+			wantErrs: []string{"SHUTDOWN_TIMEOUT: required but not set"},
+		},
+		{
+			name:     "empty value counts as missing",
+			mutate:   func(env map[string]string) { env["HTTP_ADDR"] = "" },
+			wantErrs: []string{"HTTP_ADDR: required but not set"},
+		},
+		{
+			name:     "unknown log level",
+			mutate:   func(env map[string]string) { env["LOG_LEVEL"] = "verbose" },
+			wantErrs: []string{`LOG_LEVEL: invalid value "verbose"`},
+		},
+		{
+			name:     "duration without unit",
+			mutate:   func(env map[string]string) { env["SHUTDOWN_TIMEOUT"] = "15" },
+			wantErrs: []string{`SHUTDOWN_TIMEOUT: invalid duration "15"`},
+		},
+		{
+			name:     "zero duration",
+			mutate:   func(env map[string]string) { env["SHUTDOWN_TIMEOUT"] = "0s" },
+			wantErrs: []string{"SHUTDOWN_TIMEOUT: must be positive"},
+		},
+		{
+			name:     "negative duration",
+			mutate:   func(env map[string]string) { env["SHUTDOWN_TIMEOUT"] = "-5s" },
+			wantErrs: []string{"SHUTDOWN_TIMEOUT: must be positive"},
+		},
+		{
+			name: "all problems reported at once",
+			mutate: func(env map[string]string) {
+				delete(env, "HTTP_ADDR")
+				env["LOG_LEVEL"] = "loud"
+				env["SHUTDOWN_TIMEOUT"] = "soon"
+			},
+			wantErrs: []string{
+				"HTTP_ADDR: required but not set",
+				`LOG_LEVEL: invalid value "loud"`,
+				`SHUTDOWN_TIMEOUT: invalid duration "soon"`,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			env := validEnv()
+			if tt.mutate != nil {
+				tt.mutate(env)
+			}
+
+			got, err := Load(lookupFrom(env))
+
+			if len(tt.wantErrs) == 0 {
+				if err != nil {
+					t.Fatalf("Load() unexpected error: %v", err)
+				}
+				if got != tt.want {
+					t.Fatalf("Load() = %+v, want %+v", got, tt.want)
+				}
+				return
+			}
+
+			if err == nil {
+				t.Fatalf("Load() error = nil, want errors containing %q", tt.wantErrs)
+			}
+			for _, want := range tt.wantErrs {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("Load() error = %q, missing %q", err, want)
+				}
+			}
+			if got != (Config{}) {
+				t.Errorf("Load() returned partial config %+v alongside an error, want zero value", got)
+			}
+		})
+	}
+}
