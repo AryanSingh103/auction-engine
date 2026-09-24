@@ -103,6 +103,14 @@ Run `make help` for the full list. The ones you'll use most:
 - `make migrate`, `make migrate-status`: goose migrations against `.env`'s `DATABASE_URL`.
 - `make test`, `make test-race`, `make vet`, `make fmt-check`, `make lint`: all must be clean before a milestone closes. The tests **need Docker running**, because integration tests start Postgres through testcontainers. The Makefile points testcontainers at the active docker context (colima), so a plain `go test` outside make needs `DOCKER_HOST` and `TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE` set the same way.
 - `make psql`: a psql shell inside the Postgres container. `make logs`: follow every compose service.
+- **Observability:**
+  - Grafana at `http://localhost:3000`. Dashboards are viewable without login; admin credentials are in `.env`.
+  - Prometheus at `http://localhost:9090`.
+  - The API's metrics are on its separate listener (`:9091` in the container), never on the public port.
+- **Load:**
+  - `make bench-smoke`: a 10s verified run inside compose.
+  - `scripts/bench.sh <dir> [dur] [warmup] [reps]`: the full matrix (about 40 min at 30/5/3; keep the machine idle). `scripts/bench_summary.py <dir>` produces the tables.
+  - A load run that fails its checks exits non-zero, and its numbers must not be used.
 
 CI (`.github/workflows/ci.yml`) runs lint, `make fmt-check vet test-race` and an image build on every push. Check a run with `gh run list` / `gh run watch`.
 
@@ -112,9 +120,14 @@ CI (`.github/workflows/ci.yml`) runs lint, `make fmt-check vet test-race` and an
 - `cmd/migrate/`: one-shot `up|down|status` migration command (ADR 006).
 - `migrations/`: embedded goose SQL, plus `schema_test.go`, which pins every constraint and trigger with exact SQLSTATEs.
 - `internal/config/`: env loading and validation, including cross-field rules (ADR 001).
-- `internal/auction/`: domain rules (`validateBid`, pure, table- and fuzz-tested) and the bid path (`Service.PlaceBid`, ADR 007/009).
+- `internal/auction/`: domain rules (`validateBid`, pure, table- and fuzz-tested) and the bid path (`Service.PlaceBid`, ADR 007/009). `BID_LOCKING` selects pessimistic (the default, ADR 016) or optimistic (`optimistic.go`, ADR 014). The correctness tests run against both.
 - `internal/invariants/`: SQL audit queries for the invariants. Every check is proven to detect a planted violation.
-- `internal/httpapi/`: chi router, handlers and middleware. The order is RequestID, request logger, recoverer, request deadline.
+- `internal/httpapi/`: chi router, handlers and middleware. The order is RequestID, request logger, metrics, recoverer, request deadline.
+- `internal/metrics/`: Prometheus registry, HTTP middleware (labels are route *patterns*), the pool collector, and the `auction.Observer` implementation (ADR 013).
+- `internal/loadgen/` + `cmd/loadgen/`: the self-verifying load generator (ADR 015).
+- `internal/postgres/`: pool construction; every connection gets `idle_in_transaction_session_timeout`.
+- `deploy/`: Prometheus config, and Grafana provisioning plus the dashboard JSON (change dashboards here, not in the UI).
+- `docs/benchmarks.md` + `docs/benchmarks/<date>/`: recorded numbers, with their raw data and environment.
 - `internal/testdb/`: testcontainers harness. One container per test binary, and a fresh database cloned from a migrated template per test.
 - `docs/decisions/`: ADRs, numbered `NNN-short-title.md`. `docs/open-questions.md`: spec gaps and risks R1–R13. `docs/interview/`: per-milestone interview questions.
 
@@ -124,13 +137,15 @@ Database error codes: the guard trigger raises `AE001`–`AE006` and the deferre
 
 ## Current status
 
-**Milestone 1 is complete (2026-09-24).** Schema and migrations (11), the bid path, the 1000-concurrent-bid proof with mutation checks, the invariant checker and CI are all done. The adversarial review ran and its findings are fixed; deferred items are R14 in `docs/open-questions.md`. Interview questions are in `docs/interview/m0-questions.md` and `m1-questions.md`, for the owner to answer when they choose. **Next: plan milestone 2** (metrics, Grafana, load generator, first honest numbers, pessimistic vs optimistic benchmark). Mind R14's note that a 503 means "outcome unknown".
+**Milestone 2 is in close-out (2026-09-24):** metrics, Grafana, the load generator, the benchmark (`docs/benchmarks.md`) and ADRs 013–016 are done. Pessimistic locking stays the default. R15 proposes a hybrid pre-lock rejection, which is not yet built. Interview questions for M0 and M1 are in `docs/interview/`, for the owner to answer when they choose.
 
 Notes for whoever picks this up:
 - `make run` sources `.env` in the shell. The compose `api` service gets an explicit variable list, not the whole `.env`, always listens on `:8080` inside the container, and uses an in-network `DATABASE_URL` built from the `POSTGRES_*` variables.
 - `SHUTDOWN_TIMEOUT` must stay below compose's `stop_grace_period` (20s), and in M6 below the ECS `stopTimeout`.
 - Colima only shares `$HOME` into its VM. Bind mounts from `/tmp` or `/private/tmp` show up empty inside containers.
 - In zsh, `$VAR` holding a command with spaces does not word-split. Use a shell function.
+- A plain `go test` needs `DOCKER_HOST=$(docker context inspect -f '{{.Endpoints.docker.Host}}') TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=/var/run/docker.sock` (make sets both).
+- `docker compose run` and `up` do not rebuild images; `scripts/bench.sh` builds first. Use `--build` elsewhere, or you may test stale code.
 
 ## Local environment
 
