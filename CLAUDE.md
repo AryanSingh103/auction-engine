@@ -93,6 +93,27 @@ A milestone is done only when all of these hold:
 6. Full Terraform, a GitHub Actions deploy pipeline, and a real deploy.
 7. Chaos testing, README with architecture diagram and benchmark graphs, design doc.
 
+## Commands
+
+Run `make help` for the full list. The ones you'll use most:
+
+- `cp .env.example .env`: one-time setup. `.env` is git-ignored, and every variable in it is required.
+- `make run`: run the API on the host (fast loop), with config from `.env`.
+- `make up` / `make down`: the full stack in docker compose (Postgres + API container). `make nuke` also **deletes the database volume**.
+- `make test`, `make test-race`, `make vet`, `make fmt-check`, `make lint`: all must be clean before a milestone closes.
+- `make psql`: a psql shell inside the Postgres container.
+- `make logs`: follow logs from every compose service.
+
+## Layout
+
+- `cmd/api/`: process entrypoint. `main` only maps `run() error` to an exit code. `run` holds config, logger, server lifecycle and graceful shutdown.
+- `internal/config/`: env-var loading and validation (ADR 001).
+- `internal/httpapi/`: the chi router, handlers and middleware. Middleware order is RequestID, then request logger, then recoverer.
+- `docs/decisions/`: ADRs, numbered `NNN-short-title.md`.
+- `docs/open-questions.md`: spec gaps and risks (R1–R10), each closed by an ADR.
+
+The API does not connect to Postgres yet. Compose runs Postgres, but the pgx wiring, `DATABASE_URL` and `/readyz` all arrive in M1.
+
 ## Current status
 
 Milestone 0 is in progress.
