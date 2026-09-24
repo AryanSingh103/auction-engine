@@ -1,0 +1,11 @@
+# golangci-lint v2 configuration. Run with `make lint`.
+version: "2"
+
+linters:
+  # standard = errcheck, govet, ineffassign, staticcheck, unused
+  default: standard
+  enable:
+    - errorlint # errors compared with == or type-asserted instead of errors.Is/As
+    - bodyclose # HTTP response bodies that are never closed (connection leak)
+    - noctx     # network calls made without a context (cannot be cancelled)
+    - gosec     # security smells: missing timeouts, weak randomness, etc.
