@@ -116,7 +116,12 @@ The API does not connect to Postgres yet. Compose runs Postgres, but the pgx wir
 
 ## Current status
 
-Milestone 0 is in progress.
+**Milestone 0 is complete (2026-09-24).** The adversarial review ran and its real findings are fixed. Deferred findings are R11–R13 in `docs/open-questions.md`. The owner still has to answer the 5 interview questions. **Next: plan milestone 1** (settle R1, R5, R6 and R7 in that plan).
+
+Notes for whoever picks this up:
+- `make run` sources `.env` in the shell. The compose `api` service gets an explicit variable list, not the whole `.env`, and always listens on `:8080` inside the container.
+- `SHUTDOWN_TIMEOUT` must stay below compose's `stop_grace_period` (20s), and in M6 below the ECS `stopTimeout`.
+- Colima only shares `$HOME` into its VM. Bind mounts from `/tmp` or `/private/tmp` show up empty inside containers.
 
 ## Local environment
 
