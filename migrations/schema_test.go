@@ -151,9 +151,139 @@ func TestAuctionHeadMustBeOwnBid(t *testing.T) {
 		t.Fatalf("place bid on other auction: %v", err)
 	}
 
+	// The update guard rejects it first: that bid does not extend this
+	// auction's (empty) head.
 	_, err = f.pool.Exec(ctx, `UPDATE auctions SET current_price = 1000, current_leader_id = $2, current_bid_id = $3
 		WHERE id = $1`, f.auction, f.users[0], bid)
+	wantPgError(t, err, "AE011", "")
+}
+
+// The head's leader and price must be exactly those of its bid. The bid here
+// legitimately extends the head, so only the composite foreign key can
+// catch the mismatch.
+func TestAuctionHeadLeaderAndPriceMatchBid(t *testing.T) {
+	f := newFixture(t)
+	ctx := t.Context()
+	err := pgx.BeginFunc(ctx, f.pool, func(tx pgx.Tx) error {
+		var id int64
+		if err := tx.QueryRow(ctx, `INSERT INTO bids (auction_id, user_id, amount, idempotency_key)
+			VALUES ($1, $2, 1000, 'k') RETURNING id`, f.auction, f.users[0]).Scan(&id); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `INSERT INTO outbox (auction_id, event_type, payload, bid_id) VALUES ($1, 'bid_placed', '{}', $2)`, f.auction, id); err != nil {
+			return err
+		}
+		// Wrong leader and inflated price for bid id.
+		_, err := tx.Exec(ctx, `UPDATE auctions SET current_bid_id = $2, current_leader_id = $3, current_price = 999999 WHERE id = $1`,
+			f.auction, id, f.users[1])
+		return err
+	})
 	wantPgError(t, err, "23503", "auctions_head_is_own_bid")
+}
+
+func TestAuctionUpdateGuard(t *testing.T) {
+	f := newFixture(t)
+	ctx := t.Context()
+	first, err := f.placeBid(ctx, f.auction, f.users[0], 1000, nil, "a")
+	if err != nil {
+		t.Fatalf("first bid: %v", err)
+	}
+	if _, err := f.placeBid(ctx, f.auction, f.users[1], 1100, &first, "b"); err != nil {
+		t.Fatalf("second bid: %v", err)
+	}
+
+	// The head cannot move backwards to an earlier bid.
+	_, err = f.pool.Exec(ctx, `UPDATE auctions SET current_bid_id = $2, current_leader_id = $3, current_price = 1000 WHERE id = $1`,
+		f.auction, first, f.users[0])
+	wantPgError(t, err, "AE011", "")
+
+	// The head cannot be cleared.
+	_, err = f.pool.Exec(ctx, `UPDATE auctions SET current_bid_id = NULL, current_leader_id = NULL, current_price = NULL WHERE id = $1`, f.auction)
+	wantPgError(t, err, "AE011", "")
+
+	// open -> closed is allowed; closed -> open never is.
+	if _, err := f.pool.Exec(ctx, `UPDATE auctions SET status = 'closed' WHERE id = $1`, f.auction); err != nil {
+		t.Fatalf("close auction: %v", err)
+	}
+	_, err = f.pool.Exec(ctx, `UPDATE auctions SET status = 'open' WHERE id = $1`, f.auction)
+	wantPgError(t, err, "AE010", "")
+}
+
+func TestBidsAreAppendOnly(t *testing.T) {
+	f := newFixture(t)
+	ctx := t.Context()
+	bid, err := f.placeBid(ctx, f.auction, f.users[0], 1000, nil, "a")
+	if err != nil {
+		t.Fatalf("bid: %v", err)
+	}
+	for name, sql := range map[string]string{
+		"update":   `UPDATE bids SET amount = 1 WHERE id = $1`,
+		"delete":   `DELETE FROM bids WHERE id = $1`,
+		"truncate": `TRUNCATE bids CASCADE`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			args := []any{bid}
+			if name == "truncate" {
+				args = nil
+			}
+			_, err := f.pool.Exec(ctx, sql, args...)
+			wantPgError(t, err, "AE008", "")
+		})
+	}
+}
+
+func TestOutboxIsAppendOnlyExceptPublishing(t *testing.T) {
+	f := newFixture(t)
+	ctx := t.Context()
+	bid, err := f.placeBid(ctx, f.auction, f.users[0], 1000, nil, "a")
+	if err != nil {
+		t.Fatalf("bid: %v", err)
+	}
+
+	for name, sql := range map[string]string{
+		"delete":          `DELETE FROM outbox WHERE bid_id = $1`,
+		"change payload":  `UPDATE outbox SET payload = '{"forged": true}' WHERE bid_id = $1`,
+		"publish+payload": `UPDATE outbox SET published_at = now(), payload = '{}'::jsonb || '{"x":1}' WHERE bid_id = $1`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := f.pool.Exec(ctx, sql, bid)
+			wantPgError(t, err, "AE009", "")
+		})
+	}
+	t.Run("truncate", func(t *testing.T) {
+		_, err := f.pool.Exec(ctx, `TRUNCATE outbox`)
+		wantPgError(t, err, "AE009", "")
+	})
+
+	// Marking published is allowed exactly once.
+	if _, err := f.pool.Exec(ctx, `UPDATE outbox SET published_at = now() WHERE bid_id = $1`, bid); err != nil {
+		t.Fatalf("mark published: %v", err)
+	}
+	_, err = f.pool.Exec(ctx, `UPDATE outbox SET published_at = now() WHERE bid_id = $1`, bid)
+	wantPgError(t, err, "AE009", "")
+}
+
+// created_at is set by the guard to the time it judged the bid; a value
+// supplied by the inserter is overwritten.
+func TestBidCreatedAtCannotBeSupplied(t *testing.T) {
+	f := newFixture(t)
+	ctx := t.Context()
+	var created time.Time
+	err := pgx.BeginFunc(ctx, f.pool, func(tx pgx.Tx) error {
+		var id int64
+		if err := tx.QueryRow(ctx, `INSERT INTO bids (auction_id, user_id, amount, idempotency_key, created_at)
+			VALUES ($1, $2, 1000, 'k', '2000-01-01') RETURNING id, created_at`, f.auction, f.users[0]).Scan(&id, &created); err != nil {
+			return err
+		}
+		_, err := tx.Exec(ctx, `INSERT INTO outbox (auction_id, event_type, payload, bid_id) VALUES ($1, 'bid_placed', '{}', $2)`, f.auction, id)
+		return err
+	})
+	if err != nil {
+		t.Fatalf("bid: %v", err)
+	}
+	if time.Since(created) > time.Minute {
+		t.Errorf("created_at = %s; the supplied value was kept instead of the guard's clock", created)
+	}
 }
 
 func TestAuctionPriceFloor(t *testing.T) {
