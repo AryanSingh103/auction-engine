@@ -12,6 +12,9 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/AryanSingh103/auction-engine/internal/auction"
 	"github.com/AryanSingh103/auction-engine/internal/config"
 	"github.com/AryanSingh103/auction-engine/internal/httpapi"
 )
@@ -35,6 +38,23 @@ func run() error {
 
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: cfg.LogLevel}))
 
+	// The pool connects lazily, so the API starts even if Postgres is not
+	// reachable yet; /readyz reports that until it is. A malformed
+	// DATABASE_URL, though, is a config error and fails startup.
+	poolCfg, err := pgxpool.ParseConfig(cfg.DatabaseURL)
+	if err != nil {
+		return fmt.Errorf("parse DATABASE_URL: %w", err)
+	}
+	poolCfg.MaxConns = cfg.DBMaxConns
+	pool, err := pgxpool.NewWithConfig(context.Background(), poolCfg)
+	if err != nil {
+		return fmt.Errorf("create database pool: %w", err)
+	}
+	// Closed after the HTTP server has drained (see the end of run), so no
+	// in-flight request loses its connection mid-transaction. The defer
+	// also covers early error returns.
+	defer pool.Close()
+
 	// ctx is cancelled on the first SIGINT (Ctrl-C) or SIGTERM (docker stop,
 	// ECS task stop).
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -48,7 +68,12 @@ func run() error {
 	defer cancelRequests()
 
 	srv := &http.Server{
-		Handler:           httpapi.NewRouter(logger),
+		Handler: httpapi.NewRouter(httpapi.Options{
+			Logger:         logger,
+			Auctions:       auction.NewService(pool),
+			Ready:          pool.Ping,
+			RequestTimeout: cfg.RequestTimeout,
+		}),
 		BaseContext:       func(net.Listener) context.Context { return requestCtx },
 		ReadHeaderTimeout: cfg.HTTPReadHeaderTimeout,
 		ReadTimeout:       cfg.HTTPReadTimeout,
@@ -112,6 +137,10 @@ func run() error {
 		return fmt.Errorf("serve: %w", err)
 	}
 
+	// Every handler has returned, so no connection is in use; closing the
+	// pool now ends the database sessions cleanly instead of leaving the
+	// server to notice dropped connections.
+	pool.Close()
 	logger.Info("shutdown complete")
 	return nil
 }

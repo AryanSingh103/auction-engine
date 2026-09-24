@@ -5,9 +5,15 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 )
 
 var discardLogger = slog.New(slog.DiscardHandler)
+
+// testRouter builds a router with no database, for endpoints that need none.
+func testRouter() http.Handler {
+	return NewRouter(Options{Logger: discardLogger, RequestTimeout: time.Second})
+}
 
 // These tests go through NewRouter rather than calling handleHealthz
 // directly, so they also cover the route registration and method matching.
@@ -16,7 +22,7 @@ func TestHealthz(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/healthz", nil)
 
-	NewRouter(discardLogger).ServeHTTP(rec, req)
+	testRouter().ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Errorf("status = %d, want %d", rec.Code, http.StatusOK)
@@ -35,7 +41,7 @@ func TestHealthzRejectsOtherMethods(t *testing.T) {
 			rec := httptest.NewRecorder()
 			req := httptest.NewRequestWithContext(t.Context(), method, "/healthz", nil)
 
-			NewRouter(discardLogger).ServeHTTP(rec, req)
+			testRouter().ServeHTTP(rec, req)
 
 			if rec.Code != http.StatusMethodNotAllowed {
 				t.Errorf("status = %d, want %d", rec.Code, http.StatusMethodNotAllowed)
@@ -48,7 +54,7 @@ func TestUnknownPathIs404(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/nope", nil)
 
-	NewRouter(discardLogger).ServeHTTP(rec, req)
+	testRouter().ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("status = %d, want %d", rec.Code, http.StatusNotFound)
