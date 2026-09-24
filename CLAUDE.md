@@ -118,7 +118,9 @@ CI (`.github/workflows/ci.yml`) runs lint, `make fmt-check vet test-race` and an
 - `internal/testdb/`: testcontainers harness. One container per test binary, and a fresh database cloned from a migrated template per test.
 - `docs/decisions/`: ADRs, numbered `NNN-short-title.md`. `docs/open-questions.md`: spec gaps and risks R1–R13. `docs/interview/`: per-milestone interview questions.
 
-Database error codes: the guard trigger raises `AE001`–`AE006` and the deferred outbox check raises `AE007`. `internal/auction` maps them to domain errors wrapped with `ErrRejectedByDatabaseGuard`. In correct operation that error never appears; it means the Go rules missed something.
+Database error codes: the guard trigger raises `AE001`–`AE006` and the deferred outbox check raises `AE007`. `internal/auction` maps them to domain errors wrapped with `ErrRejectedByDatabaseGuard`. Only one case is expected in correct operation: `ErrAuctionEnded` when `end_at` falls between the Go and trigger clock reads (`IsExpectedGuardRejection`). Any other guard rejection means the Go rules missed something. The hardening migrations add `AE008` (bids append-only), `AE009` (outbox append-only except marking published), `AE010` (status only open→closed) and `AE011` (head only advances one link).
+
+**Lock order:** always lock the auction row first. Every path that touches several of auctions, users, bids and outbox must follow it (R14).
 
 ## Current status
 

@@ -178,7 +178,10 @@ func writeServiceError(w http.ResponseWriter, r *http.Request, logger *slog.Logg
 	}
 	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
 		// The request deadline (REQUEST_TIMEOUT) passed, or the client went
-		// away. The transaction was rolled back.
+		// away. Usually the transaction was rolled back, but if the deadline
+		// hit while COMMIT was in flight the bid may be durable: the outcome
+		// is unknown. A retry with the same Idempotency-Key resolves it
+		// either way (replay of the committed bid, or a fresh attempt).
 		logger.WarnContext(r.Context(), "request did not finish in time", slog.Any("error", err))
 		writeError(w, logger, http.StatusServiceUnavailable, "timeout", "the request timed out; it is safe to retry with the same Idempotency-Key")
 		return

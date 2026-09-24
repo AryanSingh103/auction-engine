@@ -155,7 +155,9 @@ func TestBidTooLowReportsMinimum(t *testing.T) {
 
 // With a request deadline that has already passed when the handler runs, the
 // database call fails with context.DeadlineExceeded and the client must get
-// a 503 (retry-safe), not a 500, and nothing may be written.
+// a 503 (retry-safe), not a 500. Here the deadline passes before the
+// transaction starts, so nothing may be written. (A deadline that fires
+// during COMMIT leaves the outcome unknown; the idempotency key covers it.)
 func TestPlaceBidTimeoutIs503(t *testing.T) {
 	h, pool := apiFixture(t, time.Nanosecond)
 	rec := (bidCall{user: "1", key: "k", body: `{"amount": 1000}`}).do(t, h)
