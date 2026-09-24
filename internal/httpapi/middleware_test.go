@@ -102,3 +102,69 @@ func TestRequestLogger(t *testing.T) {
 		})
 	}
 }
+
+func TestRecovererTurnsPanicInto500(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&buf, nil))
+	// Same order as NewRouter: the logger must sit outside the recoverer to
+	// see the 500.
+	handler := middleware.RequestID(requestLogger(logger)(recoverer(logger)(
+		http.HandlerFunc(func(http.ResponseWriter, *http.Request) { panic("boom") }),
+	)))
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/explode", nil))
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("response status = %d, want 500", rec.Code)
+	}
+
+	lines := bytes.Split(bytes.TrimSpace(buf.Bytes()), []byte("\n"))
+	if len(lines) != 2 {
+		t.Fatalf("got %d log lines, want 2 (panic, then request):\n%s", len(lines), buf.String())
+	}
+	var panicLine struct {
+		Level     string `json:"level"`
+		Msg       string `json:"msg"`
+		Panic     string `json:"panic"`
+		Stack     string `json:"stack"`
+		RequestID string `json:"request_id"`
+	}
+	if err := json.Unmarshal(lines[0], &panicLine); err != nil {
+		t.Fatalf("panic log line is not JSON: %v", err)
+	}
+	if panicLine.Level != "ERROR" || panicLine.Msg != "panic recovered" || panicLine.Panic != "boom" {
+		t.Errorf("panic line = %+v, want level ERROR, msg %q, panic %q", panicLine, "panic recovered", "boom")
+	}
+	if !bytes.Contains([]byte(panicLine.Stack), []byte("TestRecovererTurnsPanicInto500")) {
+		t.Errorf("stack does not include the panicking frame:\n%s", panicLine.Stack)
+	}
+	if panicLine.RequestID == "" {
+		t.Error("panic line has empty request_id")
+	}
+
+	var reqLine logLine
+	if err := json.Unmarshal(lines[1], &reqLine); err != nil {
+		t.Fatalf("request log line is not JSON: %v", err)
+	}
+	if reqLine.Status != http.StatusInternalServerError {
+		t.Errorf("request log status = %d, want 500", reqLine.Status)
+	}
+	if reqLine.RequestID != panicLine.RequestID {
+		t.Errorf("request_id differs between lines: %q vs %q", reqLine.RequestID, panicLine.RequestID)
+	}
+}
+
+func TestRecovererRepanicsErrAbortHandler(t *testing.T) {
+	handler := recoverer(discardLogger)(
+		http.HandlerFunc(func(http.ResponseWriter, *http.Request) { panic(http.ErrAbortHandler) }),
+	)
+
+	defer func() {
+		if got := recover(); got != http.ErrAbortHandler { //nolint:errorlint // comparing the exact recovered sentinel
+			t.Errorf("recovered %v, want http.ErrAbortHandler to propagate", got)
+		}
+	}()
+	handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/", nil))
+	t.Error("ServeHTTP returned normally; want the ErrAbortHandler panic to propagate")
+}
