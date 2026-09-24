@@ -14,6 +14,24 @@ func validEnv() map[string]string {
 		"HTTP_ADDR":        ":8080",
 		"LOG_LEVEL":        "info",
 		"SHUTDOWN_TIMEOUT": "15s",
+
+		"HTTP_READ_HEADER_TIMEOUT": "5s",
+		"HTTP_READ_TIMEOUT":        "10s",
+		"HTTP_WRITE_TIMEOUT":       "10s",
+		"HTTP_IDLE_TIMEOUT":        "60s",
+	}
+}
+
+// validConfig is what validEnv must parse to.
+func validConfig() Config {
+	return Config{
+		HTTPAddr:              ":8080",
+		LogLevel:              slog.LevelInfo,
+		ShutdownTimeout:       15 * time.Second,
+		HTTPReadHeaderTimeout: 5 * time.Second,
+		HTTPReadTimeout:       10 * time.Second,
+		HTTPWriteTimeout:      10 * time.Second,
+		HTTPIdleTimeout:       60 * time.Second,
 	}
 }
 
@@ -36,12 +54,16 @@ func TestLoad(t *testing.T) {
 	}{
 		{
 			name: "valid",
-			want: Config{HTTPAddr: ":8080", LogLevel: slog.LevelInfo, ShutdownTimeout: 15 * time.Second},
+			want: validConfig(),
 		},
 		{
 			name:   "log level is case-insensitive",
 			mutate: func(env map[string]string) { env["LOG_LEVEL"] = "DEBUG" },
-			want:   Config{HTTPAddr: ":8080", LogLevel: slog.LevelDebug, ShutdownTimeout: 15 * time.Second},
+			want: func() Config {
+				c := validConfig()
+				c.LogLevel = slog.LevelDebug
+				return c
+			}(),
 		},
 		{
 			name:     "missing HTTP_ADDR",
@@ -57,6 +79,17 @@ func TestLoad(t *testing.T) {
 			name:     "missing SHUTDOWN_TIMEOUT",
 			mutate:   func(env map[string]string) { delete(env, "SHUTDOWN_TIMEOUT") },
 			wantErrs: []string{"SHUTDOWN_TIMEOUT: required but not set"},
+		},
+		{
+			name:     "missing HTTP_WRITE_TIMEOUT",
+			mutate:   func(env map[string]string) { delete(env, "HTTP_WRITE_TIMEOUT") },
+			wantErrs: []string{"HTTP_WRITE_TIMEOUT: required but not set"},
+		},
+		{
+			// Zero means "no timeout" to net/http, so it must be rejected.
+			name:     "zero server timeout",
+			mutate:   func(env map[string]string) { env["HTTP_IDLE_TIMEOUT"] = "0" },
+			wantErrs: []string{"HTTP_IDLE_TIMEOUT: must be positive"},
 		},
 		{
 			name:     "empty value counts as missing",

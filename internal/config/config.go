@@ -22,6 +22,12 @@ type Config struct {
 	// ShutdownTimeout bounds how long graceful shutdown waits for in-flight
 	// requests before giving up.
 	ShutdownTimeout time.Duration
+
+	// HTTP server timeouts; see docs/decisions/003.
+	HTTPReadHeaderTimeout time.Duration
+	HTTPReadTimeout       time.Duration
+	HTTPWriteTimeout      time.Duration
+	HTTPIdleTimeout       time.Duration
 }
 
 // LookupFunc has the signature of os.LookupEnv. Taking it as a parameter lets
@@ -45,14 +51,23 @@ func Load(lookup LookupFunc) (Config, error) {
 		errs = append(errs, fmt.Errorf("LOG_LEVEL: invalid value %q: must be debug, info, warn or error", v))
 	}
 
-	if v, err := required(lookup, "SHUTDOWN_TIMEOUT"); err != nil {
-		errs = append(errs, err)
-	} else if d, err := time.ParseDuration(v); err != nil {
-		errs = append(errs, fmt.Errorf("SHUTDOWN_TIMEOUT: invalid duration %q: %w", v, err))
-	} else if d <= 0 {
-		errs = append(errs, fmt.Errorf("SHUTDOWN_TIMEOUT: must be positive, got %s", d))
-	} else {
-		cfg.ShutdownTimeout = d
+	durations := []struct {
+		key string
+		dst *time.Duration
+	}{
+		{"SHUTDOWN_TIMEOUT", &cfg.ShutdownTimeout},
+		{"HTTP_READ_HEADER_TIMEOUT", &cfg.HTTPReadHeaderTimeout},
+		{"HTTP_READ_TIMEOUT", &cfg.HTTPReadTimeout},
+		{"HTTP_WRITE_TIMEOUT", &cfg.HTTPWriteTimeout},
+		{"HTTP_IDLE_TIMEOUT", &cfg.HTTPIdleTimeout},
+	}
+	for _, d := range durations {
+		v, err := positiveDuration(lookup, d.key)
+		if err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		*d.dst = v
 	}
 
 	if len(errs) > 0 {
@@ -70,4 +85,23 @@ func required(lookup LookupFunc, key string) (string, error) {
 		return "", fmt.Errorf("%s: required but not set", key)
 	}
 	return v, nil
+}
+
+// positiveDuration parses key as a Go duration ("15s", "500ms") that must be
+// greater than zero. Zero is rejected because for net/http timeouts it means
+// "no timeout", which is exactly the unbounded behavior these settings exist
+// to prevent.
+func positiveDuration(lookup LookupFunc, key string) (time.Duration, error) {
+	v, err := required(lookup, key)
+	if err != nil {
+		return 0, err
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil {
+		return 0, fmt.Errorf("%s: invalid duration %q: %w", key, v, err)
+	}
+	if d <= 0 {
+		return 0, fmt.Errorf("%s: must be positive, got %s", key, d)
+	}
+	return d, nil
 }
