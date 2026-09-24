@@ -47,3 +47,16 @@ Before the first `terraform apply`:
 - re-check the current free-tier terms
 
 Any step that creates billable resources needs the owner's explicit go-ahead.
+
+## R11. Handler deadlines shorter than WriteTimeout (M1)
+Found in the M0 review. When `WriteTimeout` expires, net/http kills the connection silently. The handler's context is **not** cancelled, the handler runs to completion (holding a DB connection and row locks from M1 on), and the request log records the status the handler wrote (e.g. 200), not what the client saw (EOF). M1 needs a request-deadline middleware (`context.WithTimeout`, below `WriteTimeout`) that DB calls honor. `http.TimeoutHandler` is the alternative, but it buffers responses and breaks hijacking, so it is unsuitable once WebSockets arrive.
+
+## R12. WebSocket traps in the M0 server setup (M3)
+Found in the M0 review:
+- The global `WriteTimeout` kills long-lived streams. Clear it per connection with `http.ResponseController(w).SetWriteDeadline(time.Time{})`, which works through chi's wrapper because it implements `Unwrap`.
+- `Shutdown` does not track hijacked connections. Use `RegisterOnShutdown` to send close frames.
+- `recoverer` writes a 500 after a panic, even on a hijacked connection.
+- The request log's status is meaningless for upgraded connections.
+
+## R13. Client-supplied request IDs (M6)
+Found in the M0 review. chi's `RequestID` trusts an inbound `X-Request-Id` verbatim, bounded only by the 1 MB header limit. Clients can forge or collide correlation IDs and bloat logs. The API is not publicly reachable before M6. Decide then: use the ALB's `X-Amzn-Trace-Id`, or validate and cap the inbound value, or always generate our own.
