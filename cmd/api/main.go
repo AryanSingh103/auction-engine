@@ -71,8 +71,10 @@ func run() error {
 
 	srv := &http.Server{
 		Handler: httpapi.NewRouter(httpapi.Options{
-			Logger:         logger,
-			Auctions:       auction.NewService(pool, auction.WithObserver(m)),
+			Logger: logger,
+			Auctions: auction.NewService(pool,
+				auction.WithObserver(m),
+				auction.WithLocking(auction.Locking(cfg.BidLocking))),
 			Ready:          pool.Ping,
 			RequestTimeout: cfg.RequestTimeout,
 			Metrics:        m.HTTPMiddleware,
@@ -125,7 +127,8 @@ func run() error {
 	defer func() { _ = metricsSrv.Close() }()
 	logger.Info("server started",
 		slog.String("addr", ln.Addr().String()),
-		slog.String("metrics_addr", mln.Addr().String()))
+		slog.String("metrics_addr", mln.Addr().String()),
+		slog.String("bid_locking", cfg.BidLocking))
 
 	select {
 	case err := <-serveErr:
