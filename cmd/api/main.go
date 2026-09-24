@@ -12,11 +12,10 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/jackc/pgx/v5/pgxpool"
-
 	"github.com/AryanSingh103/auction-engine/internal/auction"
 	"github.com/AryanSingh103/auction-engine/internal/config"
 	"github.com/AryanSingh103/auction-engine/internal/httpapi"
+	"github.com/AryanSingh103/auction-engine/internal/postgres"
 )
 
 // main only translates run's error into an exit code. Keeping os.Exit out of
@@ -41,14 +40,13 @@ func run() error {
 	// The pool connects lazily, so the API starts even if Postgres is not
 	// reachable yet; /readyz reports that until it is. A malformed
 	// DATABASE_URL, though, is a config error and fails startup.
-	poolCfg, err := pgxpool.ParseConfig(cfg.DatabaseURL)
+	pool, err := postgres.NewPool(context.Background(), postgres.PoolConfig{
+		URL:             cfg.DatabaseURL,
+		MaxConns:        cfg.DBMaxConns,
+		IdleInTxTimeout: cfg.DBIdleInTxTimeout,
+	})
 	if err != nil {
-		return fmt.Errorf("parse DATABASE_URL: %w", err)
-	}
-	poolCfg.MaxConns = cfg.DBMaxConns
-	pool, err := pgxpool.NewWithConfig(context.Background(), poolCfg)
-	if err != nil {
-		return fmt.Errorf("create database pool: %w", err)
+		return err
 	}
 	// Closed after the HTTP server has drained (see the end of run), so no
 	// in-flight request loses its connection mid-transaction. The defer
