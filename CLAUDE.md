@@ -116,7 +116,7 @@ The API does not connect to Postgres yet. Compose runs Postgres, but the pgx wir
 
 ## Current status
 
-**Milestone 0 is complete (2026-09-24).** The adversarial review ran and its real findings are fixed. Deferred findings are R11–R13 in `docs/open-questions.md`. The owner still has to answer the 5 interview questions. **Next: plan milestone 1** (settle R1, R5, R6 and R7 in that plan).
+**Milestone 0 is complete (2026-09-24).** The adversarial review ran and its real findings are fixed. Deferred findings are R11–R13 in `docs/open-questions.md`. The owner still has to answer the 5 interview questions in `docs/interview/m0-questions.md`; grade those answers before starting M1 planning. **Next: plan milestone 1** (settle R1, R5, R6 and R7 in that plan).
 
 Notes for whoever picks this up:
 - `make run` sources `.env` in the shell. The compose `api` service gets an explicit variable list, not the whole `.env`, and always listens on `:8080` inside the container.
