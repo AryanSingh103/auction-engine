@@ -1,0 +1,60 @@
+# Runs on every push and pull request. See docs/decisions/012.
+name: CI
+
+on:
+  push:
+  pull_request:
+
+# Least privilege: the jobs only read the repository.
+permissions:
+  contents: read
+
+# A newer push to the same branch cancels the older, now-irrelevant run.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - uses: golangci/golangci-lint-action@v9
+        with:
+          # Same version as local development (make lint).
+          version: v2.13.2
+
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: Format and vet
+        run: make fmt-check vet
+      # Integration tests start Postgres with testcontainers on the runner's
+      # Docker engine; the race detector is on for every test.
+      - name: Test with race detector
+        run: make test-race
+
+  docker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      # Catches a broken Dockerfile or a binary that no longer builds in the
+      # container, before a deploy (M6) would.
+      - name: Build image
+        run: docker build --tag auction-engine:ci .
