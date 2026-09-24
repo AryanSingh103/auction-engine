@@ -369,3 +369,42 @@ func TestBidWaitingOnLockPastCloseIsRejected(t *testing.T) {
 	}
 	assertInvariants(t, pool)
 }
+
+// Bids arriving right at end_at can pass the Go check and then be rejected
+// by the guard trigger, whose clock read comes a moment later. That must be
+// the ONLY kind of guard rejection, it must still be "auction ended", and no
+// bid may be accepted after end_at. 30 auctions each end 30ms after
+// creation while bids are placed on them back to back.
+func TestBidsAtEndBoundary(t *testing.T) {
+	pool := server.NewDB(t, 4)
+	if _, err := pool.Exec(t.Context(), `INSERT INTO users (name) SELECT 'u' || g FROM generate_series(1, 2) g`); err != nil {
+		t.Fatalf("seed users: %v", err)
+	}
+	svc := auction.NewService(pool)
+	var goRejections, guardRejections int
+	for range 30 {
+		id := seed(t, pool, 0, "clock_timestamp() + interval '30 milliseconds'")
+		for i := int64(0); ; i++ {
+			_, _, err := svc.PlaceBid(t.Context(), auction.PlaceBidRequest{
+				AuctionID: id, UserID: 1 + i%2, Amount: startingPrice + i*increment,
+				IdempotencyKey: fmt.Sprintf("a%d-b%d", id, i),
+			})
+			if err == nil {
+				continue
+			}
+			switch {
+			case auction.IsExpectedGuardRejection(err):
+				guardRejections++
+			case errors.Is(err, auction.ErrRejectedByDatabaseGuard):
+				t.Fatalf("unexpected guard rejection (Go rules missed it): %v", err)
+			case errors.Is(err, auction.ErrAuctionEnded):
+				goRejections++
+			default:
+				t.Fatalf("unexpected error: %v", err)
+			}
+			break
+		}
+	}
+	t.Logf("end-of-auction rejections: %d by Go, %d by the database guard", goRejections, guardRejections)
+	assertInvariants(t, pool)
+}

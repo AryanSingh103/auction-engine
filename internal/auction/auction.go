@@ -67,9 +67,13 @@ var (
 	ErrInvalidAmount     = errors.New("bid amount must be positive")
 	// ErrRejectedByDatabaseGuard marks a rejection that the Go rules missed
 	// and the database guard trigger caught. It is always wrapped together
-	// with the specific reason (e.g. ErrAuctionEnded). In correct operation
-	// it never appears; tests assert that, so a regression in the Go bid
-	// path cannot hide behind the backstop.
+	// with the specific reason (e.g. ErrAuctionEnded).
+	//
+	// Exactly one case is expected in correct operation: ErrAuctionEnded,
+	// when end_at falls between the Go clock read and the trigger's clock
+	// read a moment later (see IsExpectedGuardRejection). Any other guard
+	// rejection means the Go rules are wrong; tests assert that, so a
+	// regression in the Go bid path cannot hide behind the backstop.
 	ErrRejectedByDatabaseGuard = errors.New("rejected by database guard")
 	// ErrIdempotencyConflict means the idempotency key was already used by
 	// this user for a different bid (different auction or amount).
@@ -110,4 +114,15 @@ func validateBid(a Auction, userID, amount int64, now time.Time) error {
 		return &BidTooLowError{Amount: amount, Minimum: a.MinimumBid()}
 	}
 	return nil
+}
+
+// IsExpectedGuardRejection reports whether err is a database-guard rejection
+// that can occur in correct operation: the auction ended between the Go
+// bid path reading the clock and the guard trigger reading it one round
+// trip later. The bid was correctly refused; only the layer differs.
+// Other guard rejections cannot race this way (the auction row lock is
+// held throughout, and a later clock read can only find the auction "more
+// started"), so they indicate a bug.
+func IsExpectedGuardRejection(err error) bool {
+	return errors.Is(err, ErrRejectedByDatabaseGuard) && errors.Is(err, ErrAuctionEnded)
 }

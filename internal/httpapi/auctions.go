@@ -152,7 +152,12 @@ var serviceErrors = []struct {
 }
 
 func writeServiceError(w http.ResponseWriter, r *http.Request, logger *slog.Logger, err error) {
-	if errors.Is(err, auction.ErrRejectedByDatabaseGuard) {
+	switch {
+	case auction.IsExpectedGuardRejection(err):
+		// The auction ended in the instant between the Go and database
+		// clock reads. Correct outcome, just caught one layer later.
+		logger.InfoContext(r.Context(), "bid crossed end_at between clock reads; rejected by database guard", slog.Any("error", err))
+	case errors.Is(err, auction.ErrRejectedByDatabaseGuard):
 		// The client still gets the right answer, but the Go rules missed
 		// something the database caught: a bug worth seeing in the logs.
 		logger.WarnContext(r.Context(), "bid rejected by database guard, not by Go validation", slog.Any("error", err))
