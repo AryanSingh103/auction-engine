@@ -130,14 +130,22 @@ func run() error {
 		slog.String("metrics_addr", mln.Addr().String()),
 		slog.String("bid_locking", cfg.BidLocking))
 
+	// runErr is what run returns after a graceful drain: nil for a signal,
+	// or the metrics server's failure. A dead metrics listener is not a
+	// reason to abandon in-flight bids, so it triggers the same drain.
+	var runErr error
+	metricsDone := false
 	select {
 	case err := <-serveErr:
 		// Serve always returns a non-nil error. ErrServerClosed only follows
 		// Shutdown or Close, neither of which has been called yet, so any
-		// error here is a real failure.
+		// error here is a real failure. The API server is gone; there is
+		// nothing to drain.
 		return fmt.Errorf("serve: %w", err)
 	case err := <-metricsErr:
-		return fmt.Errorf("serve metrics: %w", err)
+		runErr = fmt.Errorf("serve metrics: %w", err)
+		metricsDone = true
+		logger.Error("metrics server failed; draining the API and exiting", slog.Any("error", err))
 	case <-ctx.Done():
 	}
 
@@ -168,12 +176,19 @@ func run() error {
 		return fmt.Errorf("serve: %w", err)
 	}
 
-	// The API is drained; now stop the metrics server.
-	if err := metricsSrv.Shutdown(shutdownCtx); err != nil {
-		return fmt.Errorf("metrics server shutdown: %w", err)
-	}
-	if err := <-metricsErr; !errors.Is(err, http.ErrServerClosed) {
-		return fmt.Errorf("serve metrics: %w", err)
+	// The API is drained; now stop the metrics server. It gets its own
+	// budget (a scrape is short) rather than whatever the API drain left of
+	// shutdownCtx, so a drain that used its whole budget cannot turn a
+	// clean shutdown into a failed one.
+	if !metricsDone {
+		metricsCtx, cancelMetrics := context.WithTimeout(context.Background(), cfg.HTTPWriteTimeout)
+		defer cancelMetrics()
+		if err := metricsSrv.Shutdown(metricsCtx); err != nil {
+			return fmt.Errorf("metrics server shutdown: %w", err)
+		}
+		if err := <-metricsErr; !errors.Is(err, http.ErrServerClosed) {
+			return fmt.Errorf("serve metrics: %w", err)
+		}
 	}
 
 	// Every handler has returned, so no connection is in use; closing the
@@ -181,5 +196,5 @@ func run() error {
 	// server to notice dropped connections.
 	pool.Close()
 	logger.Info("shutdown complete")
-	return nil
+	return runErr
 }
