@@ -30,6 +30,22 @@ services:
       timeout: 3s
       retries: 15
 
+  # One-shot schema migration. Runs to completion before the API starts;
+  # the API never migrates on its own (docs/decisions/006).
+  migrate:
+    build: .
+    entrypoint: ["/migrate"]
+    command: ["up"]
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:?set LOG_LEVEL in .env}
+      DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?sslmode=disable
+    depends_on:
+      postgres:
+        condition: service_healthy
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+
   api:
     build: .
     # An explicit list instead of env_file: .env, so the API receives only
@@ -60,8 +76,11 @@ services:
     # Must exceed SHUTDOWN_TIMEOUT (15s in .env.example), otherwise docker
     # sends SIGKILL while the app is still draining requests.
     stop_grace_period: 20s
-    # No depends_on on postgres yet: the API does not connect to it until
-    # milestone 1, which adds `depends_on: {postgres: {condition: service_healthy}}`.
+    depends_on:
+      # service_completed_successfully also implies postgres is healthy,
+      # because migrate itself waits for that.
+      migrate:
+        condition: service_completed_successfully
 
 volumes:
   pgdata:
