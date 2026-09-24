@@ -1,0 +1,10 @@
+# Keep the build context small and free of secrets. Only Go sources, go.mod
+# and go.sum are needed to build the image.
+.git
+.env
+bin/
+docs/
+*.md
+coverage.out
+.DS_Store
+.vscode/
