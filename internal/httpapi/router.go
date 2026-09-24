@@ -23,6 +23,8 @@ type Options struct {
 	Ready func(ctx context.Context) error
 	// RequestTimeout is the deadline put on every request context.
 	RequestTimeout time.Duration
+	// Metrics, if set, instruments every request (see internal/metrics).
+	Metrics func(http.Handler) http.Handler
 }
 
 // NewRouter returns the API's root handler.
@@ -37,6 +39,10 @@ func NewRouter(o Options) http.Handler {
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
 	r.Use(requestLogger(o.Logger))
+	if o.Metrics != nil {
+		// Outside recoverer, like the logger, so panics count as 500s.
+		r.Use(o.Metrics)
+	}
 	r.Use(recoverer(o.Logger))
 	r.Use(requestTimeout(o.RequestTimeout))
 

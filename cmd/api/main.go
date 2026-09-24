@@ -15,6 +15,7 @@ import (
 	"github.com/AryanSingh103/auction-engine/internal/auction"
 	"github.com/AryanSingh103/auction-engine/internal/config"
 	"github.com/AryanSingh103/auction-engine/internal/httpapi"
+	"github.com/AryanSingh103/auction-engine/internal/metrics"
 	"github.com/AryanSingh103/auction-engine/internal/postgres"
 )
 
@@ -65,12 +66,16 @@ func run() error {
 	requestCtx, cancelRequests := context.WithCancel(context.Background())
 	defer cancelRequests()
 
+	m := metrics.New()
+	m.RegisterPool(pool)
+
 	srv := &http.Server{
 		Handler: httpapi.NewRouter(httpapi.Options{
 			Logger:         logger,
 			Auctions:       auction.NewService(pool),
 			Ready:          pool.Ping,
 			RequestTimeout: cfg.RequestTimeout,
+			Metrics:        m.HTTPMiddleware,
 		}),
 		BaseContext:       func(net.Listener) context.Context { return requestCtx },
 		ReadHeaderTimeout: cfg.HTTPReadHeaderTimeout,
@@ -83,22 +88,44 @@ func run() error {
 		ErrorLog: slog.NewLogLogger(logger.Handler(), slog.LevelError),
 	}
 
-	// Bind before starting the serve goroutine so "address already in use"
-	// is returned here, synchronously, instead of racing with the shutdown
-	// select below.
+	// The metrics server is separate so /metrics is never reachable on the
+	// public port (docs/decisions/013). It has the same timeouts.
+	metricsMux := http.NewServeMux()
+	metricsMux.Handle("GET /metrics", m.Handler())
+	metricsSrv := &http.Server{
+		Handler:           metricsMux,
+		ReadHeaderTimeout: cfg.HTTPReadHeaderTimeout,
+		ReadTimeout:       cfg.HTTPReadTimeout,
+		WriteTimeout:      cfg.HTTPWriteTimeout,
+		IdleTimeout:       cfg.HTTPIdleTimeout,
+		ErrorLog:          slog.NewLogLogger(logger.Handler(), slog.LevelError),
+	}
+
+	// Bind both listeners before starting the serve goroutines so "address
+	// already in use" is returned here, synchronously, instead of racing
+	// with the shutdown select below.
 	var lc net.ListenConfig
 	ln, err := lc.Listen(ctx, "tcp", cfg.HTTPAddr)
 	if err != nil {
 		return fmt.Errorf("listen on %q: %w", cfg.HTTPAddr, err)
 	}
+	mln, err := lc.Listen(ctx, "tcp", cfg.MetricsAddr)
+	if err != nil {
+		_ = ln.Close()
+		return fmt.Errorf("listen on %q: %w", cfg.MetricsAddr, err)
+	}
 
-	// Buffered so the goroutine can always deliver its result and exit, even
-	// if run has already returned on another path.
+	// Buffered so each goroutine can always deliver its result and exit,
+	// even if run has already returned on another path.
 	serveErr := make(chan error, 1)
-	go func() {
-		serveErr <- srv.Serve(ln)
-	}()
-	logger.Info("server started", slog.String("addr", ln.Addr().String()))
+	metricsErr := make(chan error, 1)
+	go func() { serveErr <- srv.Serve(ln) }()
+	go func() { metricsErr <- metricsSrv.Serve(mln) }()
+	// Covers early returns; after a clean Shutdown below this is a no-op.
+	defer func() { _ = metricsSrv.Close() }()
+	logger.Info("server started",
+		slog.String("addr", ln.Addr().String()),
+		slog.String("metrics_addr", mln.Addr().String()))
 
 	select {
 	case err := <-serveErr:
@@ -106,6 +133,8 @@ func run() error {
 		// Shutdown or Close, neither of which has been called yet, so any
 		// error here is a real failure.
 		return fmt.Errorf("serve: %w", err)
+	case err := <-metricsErr:
+		return fmt.Errorf("serve metrics: %w", err)
 	case <-ctx.Done():
 	}
 
@@ -120,7 +149,8 @@ func run() error {
 	defer cancel()
 
 	// Shutdown closes the listener, closes idle connections, and waits for
-	// active requests to finish, or for shutdownCtx to expire.
+	// active requests to finish, or for shutdownCtx to expire. The metrics
+	// server keeps running meanwhile, so the drain itself is observable.
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		// Drain timed out: cancel in-flight handlers, force-close whatever
 		// is still open so the process can exit, and report failure.
@@ -133,6 +163,14 @@ func run() error {
 	// that happened while we were shutting down.
 	if err := <-serveErr; !errors.Is(err, http.ErrServerClosed) {
 		return fmt.Errorf("serve: %w", err)
+	}
+
+	// The API is drained; now stop the metrics server.
+	if err := metricsSrv.Shutdown(shutdownCtx); err != nil {
+		return fmt.Errorf("metrics server shutdown: %w", err)
+	}
+	if err := <-metricsErr; !errors.Is(err, http.ErrServerClosed) {
+		return fmt.Errorf("serve metrics: %w", err)
 	}
 
 	// Every handler has returned, so no connection is in use; closing the
