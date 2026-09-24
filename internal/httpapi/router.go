@@ -43,5 +43,8 @@ func NewRouter(o Options) http.Handler {
 	r.Get("/healthz", handleHealthz)
 	r.Get("/readyz", handleReadyz(o.Ready, o.Logger))
 
+	r.Get("/auctions/{auctionID}", handleGetAuction(o.Auctions, o.Logger))
+	r.Post("/auctions/{auctionID}/bids", handlePlaceBid(o.Auctions, o.Logger))
+
 	return r
 }
