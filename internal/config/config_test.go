@@ -21,7 +21,7 @@ func validEnv() map[string]string {
 		"HTTP_IDLE_TIMEOUT":        "60s",
 		"REQUEST_TIMEOUT":          "5s",
 
-		"DATABASE_URL": "postgres://u:p@db:5432/app",
+		"DATABASE_URL": "postgres://app@db:5432/app",
 		"DB_MAX_CONNS": "20",
 	}
 }
@@ -37,7 +37,7 @@ func validConfig() Config {
 		HTTPWriteTimeout:      10 * time.Second,
 		HTTPIdleTimeout:       60 * time.Second,
 		RequestTimeout:        5 * time.Second,
-		DatabaseURL:           "postgres://u:p@db:5432/app",
+		DatabaseURL:           "postgres://app@db:5432/app",
 		DBMaxConns:            20,
 	}
 }
@@ -220,13 +220,13 @@ func TestLoadSkipsCrossFieldChecksWhenADurationIsInvalid(t *testing.T) {
 
 func TestLoadMigrate(t *testing.T) {
 	got, err := LoadMigrate(lookupFrom(map[string]string{
-		"DATABASE_URL": "postgres://u:p@db:5432/app",
+		"DATABASE_URL": "postgres://app@db:5432/app",
 		"LOG_LEVEL":    "warn",
 	}))
 	if err != nil {
 		t.Fatalf("LoadMigrate() unexpected error: %v", err)
 	}
-	want := MigrateConfig{DatabaseURL: "postgres://u:p@db:5432/app", LogLevel: slog.LevelWarn}
+	want := MigrateConfig{DatabaseURL: "postgres://app@db:5432/app", LogLevel: slog.LevelWarn}
 	if got != want {
 		t.Errorf("LoadMigrate() = %+v, want %+v", got, want)
 	}
