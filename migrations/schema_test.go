@@ -115,8 +115,6 @@ func wantPgError(t *testing.T, err error, code, constraint string) {
 	}
 }
 
-func ptr(v int64) *int64 { return &v }
-
 func TestAuctionConstraints(t *testing.T) {
 	tests := []struct {
 		name       string
