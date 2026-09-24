@@ -15,9 +15,13 @@ import (
 
 	"github.com/AryanSingh103/auction-engine/internal/auction"
 	"github.com/AryanSingh103/auction-engine/internal/testdb"
+	"github.com/AryanSingh103/auction-engine/internal/testredis"
 )
 
-var server *testdb.Server
+var (
+	server      *testdb.Server
+	redisServer *testredis.Server
+)
 
 func TestMain(m *testing.M) {
 	ctx := context.Background()
@@ -27,10 +31,17 @@ func TestMain(m *testing.M) {
 		fmt.Fprintf(os.Stderr, "httpapi tests: %v\n", err)
 		os.Exit(1)
 	}
+	redisServer, err = testredis.Start(ctx)
+	if err != nil {
+		_ = server.Terminate(ctx)
+		fmt.Fprintf(os.Stderr, "httpapi tests: %v\n", err)
+		os.Exit(1)
+	}
 	code := m.Run()
 	if err := server.Terminate(ctx); err != nil {
 		fmt.Fprintf(os.Stderr, "httpapi tests: terminate: %v\n", err)
 	}
+	_ = redisServer.Terminate(ctx)
 	os.Exit(code)
 }
 

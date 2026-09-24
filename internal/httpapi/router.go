@@ -25,6 +25,11 @@ type Options struct {
 	RequestTimeout time.Duration
 	// Metrics, if set, instruments every request (see internal/metrics).
 	Metrics func(http.Handler) http.Handler
+	// BidLimiter, if set, rate-limits bid placement per user.
+	BidLimiter BidLimiter
+	// RecordRateLimit receives each limiter decision ("allowed", "limited",
+	// "error") for metrics. Optional.
+	RecordRateLimit func(result string)
 }
 
 // NewRouter returns the API's root handler.
@@ -50,7 +55,18 @@ func NewRouter(o Options) http.Handler {
 	r.Get("/readyz", handleReadyz(o.Ready, o.Logger))
 
 	r.Get("/auctions/{auctionID}", handleGetAuction(o.Auctions, o.Logger))
-	r.Post("/auctions/{auctionID}/bids", handlePlaceBid(o.Auctions, o.Logger))
+	r.Group(func(r chi.Router) {
+		// Only bid placement is rate limited; reads are served from cache
+		// and cheap, and limiting them would hide the auction from bidders.
+		if o.BidLimiter != nil {
+			record := o.RecordRateLimit
+			if record == nil {
+				record = func(string) {}
+			}
+			r.Use(rateLimitBids(o.BidLimiter, o.Logger, record))
+		}
+		r.Post("/auctions/{auctionID}/bids", handlePlaceBid(o.Auctions, o.Logger))
+	})
 
 	return r
 }

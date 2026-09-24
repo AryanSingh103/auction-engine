@@ -30,6 +30,8 @@ type Metrics struct {
 	httpDuration *prometheus.HistogramVec
 
 	bids bidMetrics
+
+	rateLimit *prometheus.CounterVec
 }
 
 // New creates the metrics and registers them, plus the Go runtime and
@@ -54,6 +56,14 @@ func New() *Metrics {
 		collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
 	)
 	m.bids = newBidMetrics(m.registry)
+	m.rateLimit = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "rate_limit_decisions_total",
+		Help: "Bid rate-limit decisions: allowed, limited (429), or error (Redis unavailable; request allowed).",
+	}, []string{"result"})
+	for _, r := range []string{"allowed", "limited", "error"} {
+		m.rateLimit.WithLabelValues(r)
+	}
+	m.registry.MustRegister(m.rateLimit)
 	return m
 }
 
@@ -109,3 +119,6 @@ func methodLabel(m string) string {
 	}
 	return "OTHER"
 }
+
+// RateLimitDecision counts one rate-limit decision.
+func (m *Metrics) RateLimitDecision(result string) { m.rateLimit.WithLabelValues(result).Inc() }
