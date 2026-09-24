@@ -18,11 +18,16 @@ import (
 // tested against a real one rather than mocked.
 type Service struct {
 	pool *pgxpool.Pool
+	obs  Observer
 }
 
 // NewService returns a Service using pool.
-func NewService(pool *pgxpool.Pool) *Service {
-	return &Service{pool: pool}
+func NewService(pool *pgxpool.Pool, opts ...Option) *Service {
+	s := &Service{pool: pool, obs: nopObserver{}}
+	for _, o := range opts {
+		o(s)
+	}
+	return s
 }
 
 // PlaceBidRequest is one bid attempt.
@@ -52,6 +57,8 @@ type Bid struct {
 // closer, from milestone 5) can change the auction in between. See
 // docs/decisions/007.
 func (s *Service) PlaceBid(ctx context.Context, req PlaceBidRequest) (bid Bid, replayed bool, err error) {
+	defer func() { s.obs.BidOutcome(OutcomeOf(err, replayed)) }()
+
 	bid, replayed, err = s.placeBidTx(ctx, req)
 	if isConstraintViolation(err, "bids_idempotency") {
 		// Same-key requests on the SAME auction are serialized by the row
@@ -66,6 +73,9 @@ func (s *Service) PlaceBid(ctx context.Context, req PlaceBidRequest) (bid Bid, r
 }
 
 func (s *Service) placeBidTx(ctx context.Context, req PlaceBidRequest) (bid Bid, replayed bool, err error) {
+	txStart := time.Now()
+	defer func() { s.obs.BidTransaction(time.Since(txStart)) }()
+
 	err = pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
 		// 1. The bidder must exist. Checked before the lock so an unknown
 		// user never holds up real bidders, and before validation so the
@@ -80,7 +90,9 @@ func (s *Service) placeBidTx(ctx context.Context, req PlaceBidRequest) (bid Bid,
 
 		// 2. Lock the auction row. Every other bid on this auction now waits
 		// here until we commit or roll back.
+		lockStart := time.Now()
 		a, err := lockAuction(ctx, tx, req.AuctionID)
+		s.obs.LockWait(time.Since(lockStart))
 		if err != nil {
 			return err
 		}
