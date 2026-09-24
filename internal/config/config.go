@@ -44,6 +44,11 @@ type Config struct {
 	// connection for the length of its transaction, so this bounds how many
 	// bids can be waiting on the auction row lock at once.
 	DBMaxConns int32
+	// RedisURL is the Redis connection URL (redis://host:port/db).
+	RedisURL string
+	// RedisTimeout bounds every Redis operation. Redis is an accelerator,
+	// so callers degrade on timeout instead of failing (docs/decisions/017).
+	RedisTimeout time.Duration
 	// BidLocking selects the bid path's concurrency strategy: "pessimistic"
 	// (row lock for the whole transaction, the default in .env.example) or
 	// "optimistic" (kept for benchmarking; see docs/decisions/014).
@@ -100,6 +105,7 @@ func Load(lookup LookupFunc) (Config, error) {
 		{"HTTP_IDLE_TIMEOUT", &cfg.HTTPIdleTimeout},
 		{"REQUEST_TIMEOUT", &cfg.RequestTimeout},
 		{"DB_IDLE_IN_TX_TIMEOUT", &cfg.DBIdleInTxTimeout},
+		{"REDIS_TIMEOUT", &cfg.RedisTimeout},
 	}
 	durationsOK := true
 	for _, d := range durations {
@@ -129,6 +135,12 @@ func Load(lookup LookupFunc) (Config, error) {
 		errs = append(errs, err)
 	} else {
 		cfg.DatabaseURL = v
+	}
+
+	if v, err := required(lookup, "REDIS_URL"); err != nil {
+		errs = append(errs, err)
+	} else {
+		cfg.RedisURL = v
 	}
 
 	if v, err := required(lookup, "BID_LOCKING"); err != nil {

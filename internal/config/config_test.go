@@ -27,6 +27,8 @@ func validEnv() map[string]string {
 		"BID_LOCKING":  "pessimistic",
 
 		"DB_IDLE_IN_TX_TIMEOUT": "5s",
+		"REDIS_URL":             "redis://cache:6379/0",
+		"REDIS_TIMEOUT":         "200ms",
 	}
 }
 
@@ -46,6 +48,8 @@ func validConfig() Config {
 		DBMaxConns:            20,
 		BidLocking:            "pessimistic",
 		DBIdleInTxTimeout:     5 * time.Second,
+		RedisURL:              "redis://cache:6379/0",
+		RedisTimeout:          200 * time.Millisecond,
 	}
 }
 
