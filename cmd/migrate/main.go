@@ -19,7 +19,6 @@ import (
 	// Registers the "pgx" driver with database/sql; goose needs *sql.DB.
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/pressly/goose/v3"
-	"github.com/pressly/goose/v3/lock"
 
 	"github.com/AryanSingh103/auction-engine/internal/config"
 	"github.com/AryanSingh103/auction-engine/migrations"
@@ -59,16 +58,11 @@ func run(args []string) error {
 	// and the server drops the session either way.
 	defer func() { _ = db.Close() }()
 
-	// A Postgres session-level advisory lock: if two migrate jobs start at
-	// once (a redeploy overlapping a previous one), the second waits instead
-	// of applying the same migrations concurrently.
-	locker, err := lock.NewPostgresSessionLocker()
+	// migrations.NewProvider takes a Postgres advisory lock, so overlapping
+	// migrate jobs (e.g. a redeploy racing a previous one) run one at a time.
+	provider, err := migrations.NewProvider(db)
 	if err != nil {
-		return fmt.Errorf("create migration lock: %w", err)
-	}
-	provider, err := goose.NewProvider(goose.DialectPostgres, db, migrations.FS, goose.WithSessionLocker(locker))
-	if err != nil {
-		return fmt.Errorf("create migration provider: %w", err)
+		return err
 	}
 
 	switch command {
