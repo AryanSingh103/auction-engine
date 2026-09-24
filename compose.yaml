@@ -1,0 +1,42 @@
+# Local development stack. Values come from .env (copy .env.example); the
+# ${VAR:?message} form makes compose refuse to start if a variable is missing,
+# matching the app's fail-fast config.
+name: auction-engine
+
+services:
+  postgres:
+    image: postgres:18.6-alpine3.24
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:?set POSTGRES_DB in .env}
+    ports:
+      # Bound to loopback only: the default (0.0.0.0) would expose a database
+      # with a known dev password to the whole local network.
+      - "127.0.0.1:${POSTGRES_HOST_PORT:?set POSTGRES_HOST_PORT in .env}:5432"
+    volumes:
+      # Postgres 18+ images declare their VOLUME at /var/lib/postgresql (not
+      # .../data as in older versions); data lives in a versioned subdirectory.
+      - pgdata:/var/lib/postgresql
+    healthcheck:
+      # $$ escapes compose interpolation, so the variables are expanded by the
+      # shell inside the container.
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+
+  api:
+    build: .
+    env_file: .env
+    ports:
+      # Container side is 8080 because .env.example sets HTTP_ADDR=:8080.
+      - "127.0.0.1:${APP_HOST_PORT:?set APP_HOST_PORT in .env}:8080"
+    # Must exceed SHUTDOWN_TIMEOUT (15s in .env.example), otherwise docker
+    # sends SIGKILL while the app is still draining requests.
+    stop_grace_period: 20s
+    # No depends_on on postgres yet: the API does not connect to it until
+    # milestone 1, which adds `depends_on: {postgres: {condition: service_healthy}}`.
+
+volumes:
+  pgdata:
