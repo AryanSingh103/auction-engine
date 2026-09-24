@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"log/slog"
 	"net/http"
 	"runtime/debug"
@@ -76,6 +77,23 @@ func recoverer(logger *slog.Logger) func(http.Handler) http.Handler {
 				w.WriteHeader(http.StatusInternalServerError)
 			}()
 			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+// requestTimeout puts a deadline on every request's context. Handlers pass
+// that context to the database, so a slow query is cancelled (and answered
+// with 503) before the server's WriteTimeout silently kills the connection.
+// Config validation guarantees d < WriteTimeout.
+//
+// http.TimeoutHandler was rejected: it buffers the whole response in memory
+// and breaks http.Hijacker, which WebSockets need in milestone 3.
+func requestTimeout(d time.Duration) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			ctx, cancel := context.WithTimeout(r.Context(), d)
+			defer cancel()
+			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
 }

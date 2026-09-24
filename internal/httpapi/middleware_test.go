@@ -2,11 +2,14 @@ package httpapi
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"encoding/json"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/go-chi/chi/v5/middleware"
 )
@@ -172,4 +175,28 @@ func TestRecovererRepanicsErrAbortHandler(t *testing.T) {
 	}()
 	handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/", nil))
 	t.Error("ServeHTTP returned normally; want the ErrAbortHandler panic to propagate")
+}
+
+func TestRequestTimeoutSetsDeadline(t *testing.T) {
+	var deadline time.Time
+	var hasDeadline bool
+	var ctxErrAfter error
+	h := requestTimeout(50 * time.Millisecond)(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		deadline, hasDeadline = r.Context().Deadline()
+		<-r.Context().Done() // a handler stuck on a slow query
+		ctxErrAfter = r.Context().Err()
+	}))
+
+	start := time.Now()
+	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/", nil))
+
+	if !hasDeadline {
+		t.Fatal("request context has no deadline")
+	}
+	if got := deadline.Sub(start); got > 60*time.Millisecond {
+		t.Errorf("deadline is %s after start, want about 50ms", got)
+	}
+	if !errors.Is(ctxErrAfter, context.DeadlineExceeded) {
+		t.Errorf("context error = %v, want DeadlineExceeded", ctxErrAfter)
+	}
 }
