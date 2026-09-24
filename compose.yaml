@@ -67,6 +67,7 @@ services:
       # (.env's DATABASE_URL points at the host-published port for `make run`.)
       DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?sslmode=disable
       DB_MAX_CONNS: ${DB_MAX_CONNS:?set DB_MAX_CONNS in .env}
+      BID_LOCKING: ${BID_LOCKING:?set BID_LOCKING in .env}
       DB_IDLE_IN_TX_TIMEOUT: ${DB_IDLE_IN_TX_TIMEOUT:?set DB_IDLE_IN_TX_TIMEOUT in .env}
     ports:
       - "127.0.0.1:${APP_HOST_PORT:?set APP_HOST_PORT in .env}:8080"

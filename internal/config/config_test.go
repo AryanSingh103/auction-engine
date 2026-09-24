@@ -24,6 +24,7 @@ func validEnv() map[string]string {
 
 		"DATABASE_URL": "postgres://app@db:5432/app",
 		"DB_MAX_CONNS": "20",
+		"BID_LOCKING":  "pessimistic",
 
 		"DB_IDLE_IN_TX_TIMEOUT": "5s",
 	}
@@ -43,6 +44,7 @@ func validConfig() Config {
 		RequestTimeout:        5 * time.Second,
 		DatabaseURL:           "postgres://app@db:5432/app",
 		DBMaxConns:            20,
+		BidLocking:            "pessimistic",
 		DBIdleInTxTimeout:     5 * time.Second,
 	}
 }
@@ -127,6 +129,11 @@ func TestLoad(t *testing.T) {
 			name:     "negative duration",
 			mutate:   func(env map[string]string) { env["SHUTDOWN_TIMEOUT"] = "-5s" },
 			wantErrs: []string{"SHUTDOWN_TIMEOUT: must be positive"},
+		},
+		{
+			name:     "unknown BID_LOCKING",
+			mutate:   func(env map[string]string) { env["BID_LOCKING"] = "hopeful" },
+			wantErrs: []string{`BID_LOCKING: invalid value "hopeful"`},
 		},
 		{
 			name:     "missing DATABASE_URL",

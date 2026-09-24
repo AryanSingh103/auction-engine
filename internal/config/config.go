@@ -44,6 +44,10 @@ type Config struct {
 	// connection for the length of its transaction, so this bounds how many
 	// bids can be waiting on the auction row lock at once.
 	DBMaxConns int32
+	// BidLocking selects the bid path's concurrency strategy: "pessimistic"
+	// (row lock for the whole transaction, the default in .env.example) or
+	// "optimistic" (kept for benchmarking; see docs/decisions/014).
+	BidLocking string
 	// DBIdleInTxTimeout makes Postgres end any session that sits idle inside
 	// an open transaction for longer than this. If an API host dies between
 	// statements while holding an auction row lock, the lock is released
@@ -125,6 +129,14 @@ func Load(lookup LookupFunc) (Config, error) {
 		errs = append(errs, err)
 	} else {
 		cfg.DatabaseURL = v
+	}
+
+	if v, err := required(lookup, "BID_LOCKING"); err != nil {
+		errs = append(errs, err)
+	} else if v != "pessimistic" && v != "optimistic" {
+		errs = append(errs, fmt.Errorf("BID_LOCKING: invalid value %q: must be pessimistic or optimistic", v))
+	} else {
+		cfg.BidLocking = v
 	}
 
 	if n, err := positiveInt32(lookup, "DB_MAX_CONNS"); err != nil {
