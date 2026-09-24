@@ -2,6 +2,7 @@
 package httpapi
 
 import (
+	"log/slog"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -11,10 +12,12 @@ import (
 // NewRouter returns the API's root handler.
 //
 // Middleware order matters: RequestID runs first so every later middleware
-// and handler can read the ID from the request context.
-func NewRouter() http.Handler {
+// and handler can read the ID from the request context, and the request
+// logger wraps everything after it so it sees the final status code.
+func NewRouter(logger *slog.Logger) http.Handler {
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
+	r.Use(requestLogger(logger))
 
 	r.Get("/healthz", handleHealthz)
 

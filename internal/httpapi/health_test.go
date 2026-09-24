@@ -1,10 +1,13 @@
 package httpapi
 
 import (
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 )
+
+var discardLogger = slog.New(slog.DiscardHandler)
 
 // These tests go through NewRouter rather than calling handleHealthz
 // directly, so they also cover the route registration and method matching.
@@ -13,7 +16,7 @@ func TestHealthz(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
 
-	NewRouter().ServeHTTP(rec, req)
+	NewRouter(discardLogger).ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Errorf("status = %d, want %d", rec.Code, http.StatusOK)
@@ -32,7 +35,7 @@ func TestHealthzRejectsOtherMethods(t *testing.T) {
 			rec := httptest.NewRecorder()
 			req := httptest.NewRequest(method, "/healthz", nil)
 
-			NewRouter().ServeHTTP(rec, req)
+			NewRouter(discardLogger).ServeHTTP(rec, req)
 
 			if rec.Code != http.StatusMethodNotAllowed {
 				t.Errorf("status = %d, want %d", rec.Code, http.StatusMethodNotAllowed)
@@ -45,7 +48,7 @@ func TestUnknownPathIs404(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/nope", nil)
 
-	NewRouter().ServeHTTP(rec, req)
+	NewRouter(discardLogger).ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("status = %d, want %d", rec.Code, http.StatusNotFound)
