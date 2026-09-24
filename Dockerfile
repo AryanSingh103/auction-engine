@@ -23,13 +23,16 @@ ARG TARGETOS TARGETARCH
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
     CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
-    go build -trimpath -ldflags="-s -w" -o /out/api ./cmd/api
+    go build -trimpath -ldflags="-s -w" -o /out/ ./cmd/api ./cmd/migrate
 
 # ---- runtime stage --------------------------------------------------------
 # distroless/static: CA certificates, tzdata and a nonroot user, but no shell
 # or package manager. See docs/decisions/004.
 FROM gcr.io/distroless/static-debian13:nonroot
+# One image, two entrypoints: the API (default) and the one-shot migrate
+# command (compose's migrate service overrides the entrypoint).
 COPY --from=build /out/api /api
+COPY --from=build /out/migrate /migrate
 USER nonroot:nonroot
 EXPOSE 8080
 # Exec form: the binary is PID 1 and receives SIGTERM from `docker stop`
