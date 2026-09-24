@@ -28,6 +28,8 @@ type Metrics struct {
 
 	httpRequests *prometheus.CounterVec
 	httpDuration *prometheus.HistogramVec
+
+	bids bidMetrics
 }
 
 // New creates the metrics and registers them, plus the Go runtime and
@@ -51,6 +53,7 @@ func New() *Metrics {
 		collectors.NewGoCollector(),
 		collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
 	)
+	m.bids = newBidMetrics(m.registry)
 	return m
 }
 
