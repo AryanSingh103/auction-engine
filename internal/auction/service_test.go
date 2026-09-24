@@ -332,6 +332,19 @@ func TestBidWaitingOnLockPastCloseIsRejected(t *testing.T) {
 		t.Fatalf("holder lock: %v", err)
 	}
 
+	// The bid must start while the auction is still open, or this test only
+	// shows that a bid placed after close is rejected, which proves nothing
+	// about the race. Require a clear margin so a slow runner cannot pass it
+	// vacuously.
+	var openMargin bool
+	if err := pool.QueryRow(ctx, `SELECT end_at - clock_timestamp() > interval '100 milliseconds' FROM auctions WHERE id = $1`,
+		auctionID).Scan(&openMargin); err != nil {
+		t.Fatalf("check margin: %v", err)
+	}
+	if !openMargin {
+		t.Fatal("less than 100ms of the auction window left before the bid starts; the setup was too slow for this test to mean anything")
+	}
+
 	type outcome struct {
 		err     error
 		elapsed time.Duration
