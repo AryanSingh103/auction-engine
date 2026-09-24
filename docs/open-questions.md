@@ -1,0 +1,49 @@
+# Open questions and spec risks
+
+Gaps in the brief's wording or mechanisms that would quietly break an invariant if nobody decided them. Each item is settled in the milestone shown and closed by an ADR in `docs/decisions/`. When one is resolved, mark it with the ADR number rather than deleting it.
+
+## R1. `now()` vs `clock_timestamp()` in time checks (M1, M5): critical
+In Postgres, `now()` returns the transaction's *start* time. Picture a bid transaction that starts before `end_at`, blocks on `SELECT ... FOR UPDATE` while the closer holds the row, and resumes after the close. It would still see `now() < end_at` and accept the bid, which violates invariant 4. Time checks made while holding the lock must use `clock_timestamp()`. The close-vs-bid race test must reproduce this exact interleaving.
+
+## R2. Outbox publish ordering with multiple pollers (M4): critical
+Keying Kafka messages by `auction_id` only preserves order if events are *produced* in order. If several pollers use `FOR UPDATE SKIP LOCKED`, poller A can lock event 1 and poller B event 2 of the same auction, and B may publish first. Options:
+- a single publisher behind an advisory lock
+- pollers sharded by `hash(auction_id)`
+- per-auction sequence numbers, with consumers that tolerate reordering
+
+## R3. Exactly one charge needs an idempotent payment provider (M4): critical
+A payment call that times out has an unknown outcome. If we retry blindly, we can charge twice. Settlement idempotency on our side is necessary but not sufficient. The fake payment service must accept an idempotency key and return the original result on a repeat, as Stripe does. The plan is to use the invoice id as that key.
+
+## R4. Load shedding keyed on consumer lag (M4): questionable spec
+The brief sheds load when Kafka consumer lag passes a threshold. Bids don't depend on settlement, so rejecting bids because settlement is behind couples two unrelated paths. Proposal:
+- shed on API-local saturation (requests in flight, DB pool wait time)
+- use consumer lag to throttle the outbox publisher and raise alerts
+
+To be discussed at M4.
+
+## R5. Invariant wording gaps (M1)
+- An auction that closes with zero bids: no winner and no invoice? Invariant 1 then reads "at most one winner, and exactly one if there was an accepted bid".
+- Must the first bid be `>= starting_price`, or `>= starting_price + min_increment`?
+- May the current leader raise their own bid?
+- Is there a reserve price? (Proposal: no.)
+
+## R6. Identity (M1)
+Bids, per-user rate limits (M3) and invoices all need a user, but the brief defines no authentication. Proposal: an `X-User-ID` header checked against `users`, documented explicitly as "no real auth, out of scope".
+
+## R7. Invariant 6 in both directions (M1)
+"No outbox event without its bid" needs a link from outbox to bid: a nullable `bid_id` foreign key with a unique constraint. The invariant checker should also query for bids that have no event.
+
+## R8. Redis pub/sub is fire-and-forget (M3)
+Messages published while an instance or client is disconnected are lost. WebSocket clients need a state snapshot on connect, plus per-auction sequence numbers so they can detect gaps and resync.
+
+## R9. Benchmark honesty (M2)
+Numbers are measured inside the colima VM (4 vCPU / 6 GiB), not on bare metal, and `docs/benchmarks.md` must say so. Optimistic locking on a single hot row is expected to lose to pessimistic locking because of retry storms. Report whatever is actually measured.
+
+## R10. AWS cost (M3.5, M6)
+Before the first `terraform apply`:
+- set a billing budget alarm
+- avoid NAT gateways (about $30/month each)
+- remember that the ALB and RDS cost money even when idle
+- re-check the current free-tier terms
+
+Any step that creates billable resources needs the owner's explicit go-ahead.
