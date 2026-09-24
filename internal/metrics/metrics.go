@@ -91,7 +91,21 @@ func (m *Metrics) HTTPMiddleware(next http.Handler) http.Handler {
 		if status == 0 {
 			status = http.StatusOK // nothing written: net/http sends 200
 		}
-		m.httpRequests.WithLabelValues(r.Method, route, strconv.Itoa(status)).Inc()
-		m.httpDuration.WithLabelValues(r.Method, route).Observe(time.Since(start).Seconds())
+		method := methodLabel(r.Method)
+		m.httpRequests.WithLabelValues(method, route, strconv.Itoa(status)).Inc()
+		m.httpDuration.WithLabelValues(method, route).Observe(time.Since(start).Seconds())
 	})
+}
+
+// methodLabel bounds the method label. The method is chosen by the client
+// (any token is a valid HTTP method), so using it verbatim would let anyone
+// create unlimited series and grow memory without bound. Found by the M2
+// adversarial review.
+func methodLabel(m string) string {
+	switch m {
+	case http.MethodGet, http.MethodHead, http.MethodPost, http.MethodPut, http.MethodPatch,
+		http.MethodDelete, http.MethodOptions, http.MethodConnect, http.MethodTrace:
+		return m
+	}
+	return "OTHER"
 }

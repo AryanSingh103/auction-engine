@@ -1,6 +1,7 @@
 package metrics
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -72,5 +73,20 @@ func TestHandlerExposesMetrics(t *testing.T) {
 		if !strings.Contains(body, want) {
 			t.Errorf("exposition is missing %q", want)
 		}
+	}
+}
+
+// Client-invented methods must not create new series.
+func TestUnknownMethodsShareOneLabel(t *testing.T) {
+	m := New()
+	h := testRouter(m)
+	for i := range 50 {
+		serve(t, h, fmt.Sprintf("ZZX%d", i), "/auctions/1")
+	}
+	if n := testutil.CollectAndCount(m.httpRequests); n != 1 {
+		t.Errorf("50 invented methods produced %d series, want 1", n)
+	}
+	if total := testutil.ToFloat64(m.httpRequests.WithLabelValues("OTHER", "unmatched", "405")); total != 50 {
+		t.Errorf("OTHER series counted %v requests, want 50", total)
 	}
 }
