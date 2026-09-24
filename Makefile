@@ -5,6 +5,15 @@
 # make's `include`: make would expand `$` and treat `#` as a comment inside
 # values, and exported makefile variables would leak into every recipe.
 
+# Integration tests use testcontainers, which needs the Docker API socket.
+# With colima (or any non-default docker context) it is not at
+# /var/run/docker.sock on the host, so take it from the active context.
+# Ryuk, testcontainers' cleanup container, mounts the socket from inside the
+# Docker VM, where it IS at /var/run/docker.sock. `?=` keeps any value
+# already set in the environment (CI sets neither and uses the defaults).
+export DOCKER_HOST ?= $(shell docker context inspect -f '{{.Endpoints.docker.Host}}' 2>/dev/null)
+export TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE ?= /var/run/docker.sock
+
 .DEFAULT_GOAL := help
 
 .PHONY: help
