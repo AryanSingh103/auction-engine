@@ -9,3 +9,10 @@ linters:
     - bodyclose # HTTP response bodies that are never closed (connection leak)
     - noctx     # network calls made without a context (cannot be cancelled)
     - gosec     # security smells: missing timeouts, weak randomness, etc.
+  exclusions:
+    rules:
+      # G404 (weak random) guards security-sensitive randomness; tests use
+      # math/rand only to shuffle and generate data.
+      - path: _test\.go
+        linters: [gosec]
+        text: G404
