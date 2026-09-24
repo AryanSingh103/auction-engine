@@ -98,30 +98,37 @@ A milestone is done only when all of these hold:
 Run `make help` for the full list. The ones you'll use most:
 
 - `cp .env.example .env`: one-time setup. `.env` is git-ignored, and every variable in it is required.
-- `make run`: run the API on the host (fast loop), with config from `.env`.
-- `make up` / `make down`: the full stack in docker compose (Postgres + API container). `make nuke` also **deletes the database volume**.
-- `make test`, `make test-race`, `make vet`, `make fmt-check`, `make lint`: all must be clean before a milestone closes.
-- `make psql`: a psql shell inside the Postgres container.
-- `make logs`: follow logs from every compose service.
+- `make run`: run the API on the host (fast loop), with config from `.env`. It needs Postgres running (`docker compose up -d postgres`) and migrated (`make migrate`).
+- `make up` / `make down`: the full stack in docker compose (postgres, then the one-shot migrate, then api). `make nuke` also **deletes the database volume**.
+- `make migrate`, `make migrate-status`: goose migrations against `.env`'s `DATABASE_URL`.
+- `make test`, `make test-race`, `make vet`, `make fmt-check`, `make lint`: all must be clean before a milestone closes. The tests **need Docker running**, because integration tests start Postgres through testcontainers. The Makefile points testcontainers at the active docker context (colima), so a plain `go test` outside make needs `DOCKER_HOST` and `TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE` set the same way.
+- `make psql`: a psql shell inside the Postgres container. `make logs`: follow every compose service.
+
+CI (`.github/workflows/ci.yml`) runs lint, `make fmt-check vet test-race` and an image build on every push. Check a run with `gh run list` / `gh run watch`.
 
 ## Layout
 
-- `cmd/api/`: process entrypoint. `main` only maps `run() error` to an exit code. `run` holds config, logger, server lifecycle and graceful shutdown.
-- `internal/config/`: env-var loading and validation (ADR 001).
-- `internal/httpapi/`: the chi router, handlers and middleware. Middleware order is RequestID, then request logger, then recoverer.
-- `docs/decisions/`: ADRs, numbered `NNN-short-title.md`.
-- `docs/open-questions.md`: spec gaps and risks (R1–R10), each closed by an ADR.
+- `cmd/api/`: API entrypoint. `run()` holds config, logger, the pgx pool, server lifecycle and graceful shutdown. The server drains first, then the pool closes.
+- `cmd/migrate/`: one-shot `up|down|status` migration command (ADR 006).
+- `migrations/`: embedded goose SQL, plus `schema_test.go`, which pins every constraint and trigger with exact SQLSTATEs.
+- `internal/config/`: env loading and validation, including cross-field rules (ADR 001).
+- `internal/auction/`: domain rules (`validateBid`, pure, table- and fuzz-tested) and the bid path (`Service.PlaceBid`, ADR 007/009).
+- `internal/invariants/`: SQL audit queries for the invariants. Every check is proven to detect a planted violation.
+- `internal/httpapi/`: chi router, handlers and middleware. The order is RequestID, request logger, recoverer, request deadline.
+- `internal/testdb/`: testcontainers harness. One container per test binary, and a fresh database cloned from a migrated template per test.
+- `docs/decisions/`: ADRs, numbered `NNN-short-title.md`. `docs/open-questions.md`: spec gaps and risks R1–R13. `docs/interview/`: per-milestone interview questions.
 
-The API does not connect to Postgres yet. Compose runs Postgres, but the pgx wiring, `DATABASE_URL` and `/readyz` all arrive in M1.
+Database error codes: the guard trigger raises `AE001`–`AE006` and the deferred outbox check raises `AE007`. `internal/auction` maps them to domain errors wrapped with `ErrRejectedByDatabaseGuard`. In correct operation that error never appears; it means the Go rules missed something.
 
 ## Current status
 
-**Milestone 0 is complete (2026-09-24).** The adversarial review ran and its real findings are fixed. Deferred findings are R11–R13 in `docs/open-questions.md`. Its interview questions are in `docs/interview/m0-questions.md`, for the owner to answer when they choose. **Next: plan milestone 1** (settle R1, R5, R6 and R7 in that plan).
+**Milestone 1 is in close-out (2026-09-24):** schema, migrations, the bid path with its 1000-concurrent-bid proof, and CI are done. M0's interview questions are in `docs/interview/m0-questions.md`, for the owner to answer when they choose.
 
 Notes for whoever picks this up:
-- `make run` sources `.env` in the shell. The compose `api` service gets an explicit variable list, not the whole `.env`, and always listens on `:8080` inside the container.
+- `make run` sources `.env` in the shell. The compose `api` service gets an explicit variable list, not the whole `.env`, always listens on `:8080` inside the container, and uses an in-network `DATABASE_URL` built from the `POSTGRES_*` variables.
 - `SHUTDOWN_TIMEOUT` must stay below compose's `stop_grace_period` (20s), and in M6 below the ECS `stopTimeout`.
 - Colima only shares `$HOME` into its VM. Bind mounts from `/tmp` or `/private/tmp` show up empty inside containers.
+- In zsh, `$VAR` holding a command with spaces does not word-split. Use a shell function.
 
 ## Local environment
 
