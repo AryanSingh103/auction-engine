@@ -37,3 +37,7 @@ vet: ## Run go vet
 .PHONY: fmt-check
 fmt-check: ## Fail if any file is not gofmt-formatted
 	@out="$$(gofmt -l .)"; if [ -n "$$out" ]; then echo "not gofmt-formatted:"; echo "$$out"; exit 1; fi
+
+.PHONY: lint
+lint: ## Run golangci-lint (config in .golangci.yml)
+	golangci-lint run ./...
