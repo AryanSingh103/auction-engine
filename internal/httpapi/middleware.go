@@ -3,6 +3,7 @@ package httpapi
 import (
 	"log/slog"
 	"net/http"
+	"runtime/debug"
 	"time"
 
 	"github.com/go-chi/chi/v5/middleware"
@@ -37,6 +38,40 @@ func requestLogger(logger *slog.Logger) func(http.Handler) http.Handler {
 				slog.Duration("duration", time.Since(start)),
 				slog.String("request_id", middleware.GetReqID(r.Context())),
 			)
+		})
+	}
+}
+
+// recoverer turns a panic in a handler into a 500 response and a structured
+// error log with the stack trace, instead of letting it crash the connection.
+//
+// net/http would already recover a panicking handler, but it only prints to
+// stderr in plain text and aborts the connection without a response. chi's
+// middleware.Recoverer has the same plain-text problem as its Logger.
+func recoverer(logger *slog.Logger) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			defer func() {
+				rec := recover()
+				if rec == nil {
+					return
+				}
+				// http.ErrAbortHandler is net/http's sentinel for "abort this
+				// response silently"; re-panic so the server handles it as
+				// designed.
+				if rec == http.ErrAbortHandler { //nolint:errorlint // recover() returns the exact sentinel value, never a wrapped error
+					panic(rec)
+				}
+				logger.LogAttrs(r.Context(), slog.LevelError, "panic recovered",
+					slog.Any("panic", rec),
+					slog.String("stack", string(debug.Stack())),
+					slog.String("request_id", middleware.GetReqID(r.Context())),
+				)
+				// If the handler already started writing a response, this
+				// status cannot be sent; the client sees a truncated reply.
+				w.WriteHeader(http.StatusInternalServerError)
+			}()
+			next.ServeHTTP(w, r)
 		})
 	}
 }

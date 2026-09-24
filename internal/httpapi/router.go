@@ -13,11 +13,13 @@ import (
 //
 // Middleware order matters: RequestID runs first so every later middleware
 // and handler can read the ID from the request context, and the request
-// logger wraps everything after it so it sees the final status code.
+// logger wraps everything after it so it sees the final status code,
+// including the 500 written by recoverer, which must sit inside the logger.
 func NewRouter(logger *slog.Logger) http.Handler {
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
 	r.Use(requestLogger(logger))
+	r.Use(recoverer(logger))
 
 	r.Get("/healthz", handleHealthz)
 
