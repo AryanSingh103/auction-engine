@@ -1,12 +1,9 @@
 # Developer entry points. `make help` lists targets.
 #
-# .env (git-ignored; copy from .env.example) is loaded into make variables and
-# exported to every recipe, so `make run` sees the same configuration docker
-# compose does. The leading dash means a missing .env is not an error for
-# targets that do not need it (test, lint, ...); the app itself fails fast on
-# missing config.
--include .env
-export
+# Config lives in .env (git-ignored; copy from .env.example). Only `run`
+# reads it, by sourcing it in the shell. It is deliberately NOT loaded with
+# make's `include`: make would expand `$` and treat `#` as a comment inside
+# values, and exported makefile variables would leak into every recipe.
 
 .DEFAULT_GOAL := help
 
@@ -16,7 +13,8 @@ help: ## List targets
 
 .PHONY: run
 run: ## Run the API on the host with config from .env
-	go run ./cmd/api
+	@test -f .env || { echo ".env not found: cp .env.example .env"; exit 1; }
+	set -a && . ./.env && set +a && go run ./cmd/api
 
 .PHONY: build
 build: ## Build the API binary to bin/api
@@ -43,7 +41,7 @@ lint: ## Run golangci-lint (config in .golangci.yml)
 	golangci-lint run ./...
 
 .PHONY: up
-up: ## Build and start the full stack in docker compose, wait until healthy
+up: ## Build and start the full stack; waits for postgres healthy, api running
 	docker compose up -d --build --wait
 
 .PHONY: down
