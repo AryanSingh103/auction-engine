@@ -233,6 +233,7 @@ type worker struct {
 	id                  int
 	user, auction       int64
 	knownMin            int64
+	leading             bool
 	measureFrom, stopAt time.Time
 
 	seq                                             int
@@ -252,6 +253,17 @@ func (w *worker) runHealthz(ctx context.Context) {
 
 func (w *worker) runBids(ctx context.Context) {
 	for time.Now().Before(w.stopAt) && ctx.Err() == nil {
+		if w.leading {
+			// A real bidder who holds the lead waits to be outbid rather
+			// than bidding against itself (which can only fail). Watch the
+			// auction; these GETs are auxiliary and excluded from the
+			// headline latency.
+			w.refresh(ctx)
+			if w.leading {
+				_ = sleep(ctx, 2*time.Millisecond)
+			}
+			continue
+		}
 		w.seq++
 		w.logical++
 		key := fmt.Sprintf("%s-w%d-%d", w.r.cfg.Label, w.id, w.seq)
@@ -283,6 +295,7 @@ func (w *worker) placeBid(ctx context.Context, key string, amount int64) {
 				w.acceptedMeasured++
 			}
 			w.knownMin = amount + increment
+			w.leading = true
 			return
 		case status == http.StatusConflict && code == "bid_too_low":
 			if m := minimumFrom(resp); m > 0 {
@@ -290,10 +303,11 @@ func (w *worker) placeBid(ctx context.Context, key string, amount int64) {
 			}
 			return
 		case status == http.StatusConflict && code == "self_outbid":
-			// We lead; refresh the minimum so the next bid is meaningful,
-			// and yield briefly instead of spinning against our own lead.
-			w.refreshMinimum(ctx)
-			_ = sleep(ctx, 2*time.Millisecond)
+			// We believed we were NOT leading (a leading bidder does not
+			// bid), yet the server says we are: either another attempt of
+			// ours committed, or (optimistic strategy) the server judged a
+			// stale snapshot. Refresh and carry on.
+			w.refresh(ctx)
 			return
 		case status >= 400 && status < 500:
 			return // definitive rejection (e.g. auction ended)
@@ -307,16 +321,23 @@ func (w *worker) placeBid(ctx context.Context, key string, amount int64) {
 	}
 }
 
-func (w *worker) refreshMinimum(ctx context.Context) {
+// refresh reads the auction to learn the current minimum and whether this
+// worker leads.
+func (w *worker) refresh(ctx context.Context) {
 	start := time.Now()
 	status, resp, err := w.do(ctx, http.MethodGet, fmt.Sprintf("/auctions/%d", w.auction), nil, "")
 	w.record(start, "get_"+resultName(status, "", err), false)
 	var a struct {
-		MinimumBid int64 `json:"minimum_bid"`
+		MinimumBid      int64  `json:"minimum_bid"`
+		CurrentLeaderID *int64 `json:"current_leader_id"`
 	}
-	if status == http.StatusOK && json.Unmarshal(resp, &a) == nil && a.MinimumBid > 0 {
+	if status != http.StatusOK || json.Unmarshal(resp, &a) != nil {
+		return
+	}
+	if a.MinimumBid > 0 {
 		w.knownMin = a.MinimumBid
 	}
+	w.leading = a.CurrentLeaderID != nil && *a.CurrentLeaderID == w.user
 }
 
 // record counts every request and, if it started inside the measurement
