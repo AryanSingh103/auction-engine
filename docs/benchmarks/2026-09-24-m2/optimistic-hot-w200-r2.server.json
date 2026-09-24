@@ -1,0 +1,9 @@
+{
+  "lock_wait_p50_s": 0.0020310118868787264,
+  "lock_wait_p99_s": 0.006986510364226702,
+  "tx_p99_s": 0.026205849027671372,
+  "optimistic_conflicts": 48887.90125493726,
+  "contention_failures": 0,
+  "pool_empty_acquires": 431530.7395130243,
+  "api_cpu_seconds": 40.55327583620819
+}

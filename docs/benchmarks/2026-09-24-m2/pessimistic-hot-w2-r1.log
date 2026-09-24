@@ -1,0 +1,12 @@
+ Container auction-engine-loadgen-run-9be895b0cde2 Creating 
+ Container auction-engine-loadgen-run-9be895b0cde2 Created 
+loadgen pessimistic-hot-w2-r1: bids mode, 2 workers, 1 auction(s), 5s warmup + 30s measured
+
+throughput  541.9 req/s   accepted 541.9 bids/s   (16256 primary requests in 30s)
+latency ms  p50 0.72  p90 0.84  p99 1.10  p99.9 3.24  max 52.54  mean 0.75
+results     201=18840 409_bid_too_low=1 get_200=40285
+[PASS] server counted every response the client received: server http_requests_total delta 59126, client responses 59126, client transport errors 0
+[PASS] error rate within limit: 0 of 59126 requests were 5xx or transport errors (0.000%, limit 1.000%); 0 bids left unresolved
+[PASS] client accepted count matches bids in the database: client counted 18840 accepted, database has 18840
+[PASS] load actually moved prices: 18840 accepted bids; 1 of 1 auctions above their starting price
+[PASS] invariants hold: 0 violations 

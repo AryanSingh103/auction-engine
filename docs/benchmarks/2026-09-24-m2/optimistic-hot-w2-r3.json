@@ -1,0 +1,87 @@
+{
+  "label": "optimistic-hot-w2-r3",
+  "mode": "bids",
+  "config": {
+    "Mode": "bids",
+    "APIURL": "http://api:8080",
+    "MetricsURL": "http://api:9091/metrics",
+    "Workers": 2,
+    "Auctions": 1,
+    "Warmup": 5000000000,
+    "Duration": 30000000000,
+    "RaiseSteps": 3,
+    "RequestTimeout": 10000000000,
+    "MaxErrorRate": 0.01,
+    "Label": "optimistic-hot-w2-r3"
+  },
+  "started_at": "2026-09-24T22:42:53.397291865Z",
+  "measured_seconds": 30,
+  "throughput_rps": 510.96666666666664,
+  "accepted_bids_per_second": 510.96666666666664,
+  "latency": {
+    "count": 15329,
+    "mean_ms": 0.696,
+    "p50_ms": 0.67,
+    "p90_ms": 0.761,
+    "p99_ms": 0.98,
+    "p99_9_ms": 2.842,
+    "max_ms": 63.282
+  },
+  "latency_by_result": {
+    "201": {
+      "count": 15329,
+      "mean_ms": 0.696,
+      "p50_ms": 0.67,
+      "p90_ms": 0.761,
+      "p99_ms": 0.98,
+      "p99_9_ms": 2.842,
+      "max_ms": 63.282
+    },
+    "get_200": {
+      "count": 34401,
+      "mean_ms": 0.133,
+      "p50_ms": 0.13,
+      "p90_ms": 0.155,
+      "p99_ms": 0.217,
+      "p99_9_ms": 0.423,
+      "max_ms": 1.508
+    }
+  },
+  "requests_total": 58080,
+  "responses_total": 58080,
+  "transport_errors": 0,
+  "results": {
+    "201": 17923,
+    "get_200": 40157
+  },
+  "logical_bids": 17923,
+  "accepted_bids": 17923,
+  "unresolved_bids": 0,
+  "checks": [
+    {
+      "name": "server counted every response the client received",
+      "passed": true,
+      "detail": "server http_requests_total delta 58080, client responses 58080, client transport errors 0"
+    },
+    {
+      "name": "error rate within limit",
+      "passed": true,
+      "detail": "0 of 58080 requests were 5xx or transport errors (0.000%, limit 1.000%); 0 bids left unresolved"
+    },
+    {
+      "name": "client accepted count matches bids in the database",
+      "passed": true,
+      "detail": "client counted 17923 accepted, database has 17923"
+    },
+    {
+      "name": "load actually moved prices",
+      "passed": true,
+      "detail": "17923 accepted bids; 1 of 1 auctions above their starting price"
+    },
+    {
+      "name": "invariants hold",
+      "passed": true,
+      "detail": "0 violations "
+    }
+  ]
+}

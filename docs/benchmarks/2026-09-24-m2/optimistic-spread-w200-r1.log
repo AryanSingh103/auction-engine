@@ -1,0 +1,12 @@
+ Container auction-engine-loadgen-run-0a68c3c0343f Creating 
+ Container auction-engine-loadgen-run-0a68c3c0343f Created 
+loadgen optimistic-spread-w200-r1: bids mode, 200 workers, 100 auction(s), 5s warmup + 30s measured
+
+throughput  3257.1 req/s   accepted 3257.1 bids/s   (97713 primary requests in 30s)
+latency ms  p50 17.64  p90 26.61  p99 58.34  p99.9 164.06  max 216.69  mean 19.57
+results     201=117897 409_bid_too_low=65 get_200=255281
+[PASS] server counted every response the client received: server http_requests_total delta 373243, client responses 373243, client transport errors 0
+[PASS] error rate within limit: 0 of 373243 requests were 5xx or transport errors (0.000%, limit 1.000%); 0 bids left unresolved
+[PASS] client accepted count matches bids in the database: client counted 117897 accepted, database has 117897
+[PASS] load actually moved prices: 117897 accepted bids; 100 of 100 auctions above their starting price
+[PASS] invariants hold: 0 violations 

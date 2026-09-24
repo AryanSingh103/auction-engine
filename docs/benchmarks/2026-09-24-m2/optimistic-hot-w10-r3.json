@@ -1,0 +1,97 @@
+{
+  "label": "optimistic-hot-w10-r3",
+  "mode": "bids",
+  "config": {
+    "Mode": "bids",
+    "APIURL": "http://api:8080",
+    "MetricsURL": "http://api:9091/metrics",
+    "Workers": 10,
+    "Auctions": 1,
+    "Warmup": 5000000000,
+    "Duration": 30000000000,
+    "RaiseSteps": 3,
+    "RequestTimeout": 10000000000,
+    "MaxErrorRate": 0.01,
+    "Label": "optimistic-hot-w10-r3"
+  },
+  "started_at": "2026-09-24T22:44:25.639861731Z",
+  "measured_seconds": 30,
+  "throughput_rps": 3618.266666666667,
+  "accepted_bids_per_second": 904.3333333333334,
+  "latency": {
+    "count": 108548,
+    "mean_ms": 2.114,
+    "p50_ms": 1.933,
+    "p90_ms": 3.588,
+    "p99_ms": 6.997,
+    "p99_9_ms": 13.332,
+    "max_ms": 136.197
+  },
+  "latency_by_result": {
+    "201": {
+      "count": 27130,
+      "mean_ms": 1.136,
+      "p50_ms": 0.913,
+      "p90_ms": 1.746,
+      "p99_ms": 3.661,
+      "p99_9_ms": 7.584,
+      "max_ms": 132.451
+    },
+    "409_bid_too_low": {
+      "count": 81418,
+      "mean_ms": 2.44,
+      "p50_ms": 2.344,
+      "p90_ms": 4.015,
+      "p99_ms": 7.336,
+      "p99_9_ms": 13.911,
+      "max_ms": 136.197
+    },
+    "get_200": {
+      "count": 54788,
+      "mean_ms": 0.186,
+      "p50_ms": 0.161,
+      "p90_ms": 0.267,
+      "p99_ms": 0.62,
+      "p99_9_ms": 1.938,
+      "max_ms": 17.811
+    }
+  },
+  "requests_total": 189101,
+  "responses_total": 189101,
+  "transport_errors": 0,
+  "results": {
+    "201": 31444,
+    "409_bid_too_low": 94119,
+    "get_200": 63538
+  },
+  "logical_bids": 125563,
+  "accepted_bids": 31444,
+  "unresolved_bids": 0,
+  "checks": [
+    {
+      "name": "server counted every response the client received",
+      "passed": true,
+      "detail": "server http_requests_total delta 189101, client responses 189101, client transport errors 0"
+    },
+    {
+      "name": "error rate within limit",
+      "passed": true,
+      "detail": "0 of 189101 requests were 5xx or transport errors (0.000%, limit 1.000%); 0 bids left unresolved"
+    },
+    {
+      "name": "client accepted count matches bids in the database",
+      "passed": true,
+      "detail": "client counted 31444 accepted, database has 31444"
+    },
+    {
+      "name": "load actually moved prices",
+      "passed": true,
+      "detail": "31444 accepted bids; 1 of 1 auctions above their starting price"
+    },
+    {
+      "name": "invariants hold",
+      "passed": true,
+      "detail": "0 violations "
+    }
+  ]
+}

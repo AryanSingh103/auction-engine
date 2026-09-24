@@ -1,0 +1,62 @@
+{
+  "label": "control-healthz-w50-r3",
+  "mode": "healthz",
+  "config": {
+    "Mode": "healthz",
+    "APIURL": "http://api:8080",
+    "MetricsURL": "http://api:9091/metrics",
+    "Workers": 50,
+    "Auctions": 1,
+    "Warmup": 5000000000,
+    "Duration": 30000000000,
+    "RaiseSteps": 3,
+    "RequestTimeout": 10000000000,
+    "MaxErrorRate": 0.01,
+    "Label": "control-healthz-w50-r3"
+  },
+  "started_at": "2026-09-24T22:41:20.430201951Z",
+  "measured_seconds": 30,
+  "throughput_rps": 66999.33333333333,
+  "accepted_bids_per_second": 0,
+  "latency": {
+    "count": 2009980,
+    "mean_ms": 0.745,
+    "p50_ms": 0.516,
+    "p90_ms": 1.643,
+    "p99_ms": 3.776,
+    "p99_9_ms": 6.298,
+    "max_ms": 18.658
+  },
+  "latency_by_result": {
+    "200": {
+      "count": 2009980,
+      "mean_ms": 0.745,
+      "p50_ms": 0.516,
+      "p90_ms": 1.643,
+      "p99_ms": 3.776,
+      "p99_9_ms": 6.298,
+      "max_ms": 18.658
+    }
+  },
+  "requests_total": 2407126,
+  "responses_total": 2407126,
+  "transport_errors": 0,
+  "results": {
+    "200": 2407126
+  },
+  "logical_bids": 0,
+  "accepted_bids": 0,
+  "unresolved_bids": 0,
+  "checks": [
+    {
+      "name": "server counted every response the client received",
+      "passed": true,
+      "detail": "server http_requests_total delta 2407126, client responses 2407126, client transport errors 0"
+    },
+    {
+      "name": "error rate within limit",
+      "passed": true,
+      "detail": "0 of 2407126 requests were 5xx or transport errors (0.000%, limit 1.000%); 0 bids left unresolved"
+    }
+  ]
+}

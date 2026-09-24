@@ -1,0 +1,9 @@
+ Container auction-engine-loadgen-run-7fc5a8c53c8d Creating 
+ Container auction-engine-loadgen-run-7fc5a8c53c8d Created 
+loadgen control-healthz-w50-r1: healthz mode, 50 workers, 1 auction(s), 5s warmup + 30s measured
+
+throughput  79331.5 req/s   accepted 0.0 bids/s   (2379944 primary requests in 30s)
+latency ms  p50 0.44  p90 1.39  p99 3.21  p99.9 5.59  max 17.70  mean 0.63
+results     200=2772850
+[PASS] server counted every response the client received: server http_requests_total delta 2772850, client responses 2772850, client transport errors 0
+[PASS] error rate within limit: 0 of 2772850 requests were 5xx or transport errors (0.000%, limit 1.000%); 0 bids left unresolved

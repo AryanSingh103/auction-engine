@@ -1,0 +1,13 @@
+date_utc: 2026-09-24T22:17:17Z
+git_commit: 151b6e2ea69b561898d0636f0e402d7579876335
+host: Apple M3 / 8 cores / 16 GiB / macOS 15.7.7
+colima: default Running aarch64 4 6GiB 40GiB docker 
+go: go version go1.27.1 darwin/arm64
+docker_server: 29.5.2
+images:
+  postgres:18.6-alpine3.24 sha256:77f585114c32
+  prom/prometheus:v3.14.0 sha256:5ce7540c3c00
+  auction-engine-api sha256:e0a56585ac04
+  auction-engine-migrate sha256:531c7e12908c
+  auction-engine-loadgen sha256:ddc931ba863f
+config: duration=30 warmup=5 reps=3 DB_MAX_CONNS=20
