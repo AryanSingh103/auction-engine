@@ -83,31 +83,39 @@ func (s *Server) Terminate(ctx context.Context) error {
 // and the database dropped when the test finishes.
 func (s *Server) NewDB(t testing.TB, maxConns int32) *pgxpool.Pool {
 	t.Helper()
-	ctx := t.Context()
-
-	name := fmt.Sprintf("test_%d", s.counter.Add(1))
-	if err := s.exec(ctx, fmt.Sprintf("CREATE DATABASE %s TEMPLATE %s", name, templateDB)); err != nil {
-		t.Fatalf("create test database: %v", err)
-	}
-
-	cfg, err := pgxpool.ParseConfig(s.urlFor(name))
+	cfg, err := pgxpool.ParseConfig(s.NewDBURL(t))
 	if err != nil {
 		t.Fatalf("parse pool config: %v", err)
 	}
 	cfg.MaxConns = maxConns
-	pool, err := pgxpool.NewWithConfig(ctx, cfg)
+	pool, err := pgxpool.NewWithConfig(t.Context(), cfg)
 	if err != nil {
 		t.Fatalf("create pool: %v", err)
 	}
 
+	// Registered after NewDBURL's cleanup, so it runs first: the pool is
+	// closed before the database is dropped.
+	t.Cleanup(pool.Close)
+	return pool
+}
+
+// NewDBURL creates a fresh, fully migrated database for one test and
+// returns its connection URL, for tests that build their own pool. The
+// database is dropped when the test finishes (WITH (FORCE) terminates any
+// connections still open).
+func (s *Server) NewDBURL(t testing.TB) string {
+	t.Helper()
+	name := fmt.Sprintf("test_%d", s.counter.Add(1))
+	if err := s.exec(t.Context(), fmt.Sprintf("CREATE DATABASE %s TEMPLATE %s", name, templateDB)); err != nil {
+		t.Fatalf("create test database: %v", err)
+	}
 	t.Cleanup(func() {
-		pool.Close()
 		// t.Context() is already cancelled when cleanups run.
 		if err := s.exec(context.Background(), "DROP DATABASE "+name+" WITH (FORCE)"); err != nil {
 			t.Errorf("drop test database %s: %v", name, err)
 		}
 	})
-	return pool
+	return s.urlFor(name)
 }
 
 // urlFor returns the admin connection URL pointed at database name.
