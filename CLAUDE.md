@@ -137,7 +137,7 @@ Database error codes: the guard trigger raises `AE001`–`AE006` and the deferre
 
 ## Current status
 
-**Milestone 2 is in close-out (2026-09-24):** metrics, Grafana, the load generator, the benchmark (`docs/benchmarks.md`) and ADRs 013–016 are done. Pessimistic locking stays the default. R15 proposes a hybrid pre-lock rejection, which is not yet built. Interview questions for M0 and M1 are in `docs/interview/`, for the owner to answer when they choose.
+**Milestone 2 is complete (2026-09-24).** Metrics, Grafana, the self-verifying load generator, the benchmark (`docs/benchmarks.md`, corrected after review) and ADRs 013–016 are done. Pessimistic locking stays the default. Open for later: R15 (the hybrid pre-lock rejection, unmeasured) and R16 (deferred review items, including making guard classification strategy-aware before M5). Interview questions for M0–M2 are in `docs/interview/`, for the owner to answer when they choose. **Next: plan milestone 3** (WebSocket fan-out, Redis caching, Redis pub/sub across API instances, rate limiting; see R8 and R12).
 
 Notes for whoever picks this up:
 - `make run` sources `.env` in the shell. The compose `api` service gets an explicit variable list, not the whole `.env`, always listens on `:8080` inside the container, and uses an in-network `DATABASE_URL` built from the `POSTGRES_*` variables.
