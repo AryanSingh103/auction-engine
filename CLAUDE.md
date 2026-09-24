@@ -124,7 +124,7 @@ Database error codes: the guard trigger raises `AE001`–`AE006` and the deferre
 
 ## Current status
 
-**Milestone 1 is in close-out (2026-09-24):** schema, migrations, the bid path with its 1000-concurrent-bid proof, and CI are done. M0's interview questions are in `docs/interview/m0-questions.md`, for the owner to answer when they choose.
+**Milestone 1 is complete (2026-09-24).** Schema and migrations (11), the bid path, the 1000-concurrent-bid proof with mutation checks, the invariant checker and CI are all done. The adversarial review ran and its findings are fixed; deferred items are R14 in `docs/open-questions.md`. Interview questions are in `docs/interview/m0-questions.md` and `m1-questions.md`, for the owner to answer when they choose. **Next: plan milestone 2** (metrics, Grafana, load generator, first honest numbers, pessimistic vs optimistic benchmark). Mind R14's note that a 503 means "outcome unknown".
 
 Notes for whoever picks this up:
 - `make run` sources `.env` in the shell. The compose `api` service gets an explicit variable list, not the whole `.env`, always listens on `:8080` inside the container, and uses an in-network `DATABASE_URL` built from the `POSTGRES_*` variables.
