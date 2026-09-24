@@ -29,27 +29,32 @@ func validEnv() map[string]string {
 		"DB_IDLE_IN_TX_TIMEOUT": "5s",
 		"REDIS_URL":             "redis://cache:6379/0",
 		"REDIS_TIMEOUT":         "200ms",
+
+		"RATE_LIMIT_BIDS_PER_SECOND": "10",
+		"RATE_LIMIT_BID_BURST":       "20",
 	}
 }
 
 // validConfig is what validEnv must parse to.
 func validConfig() Config {
 	return Config{
-		HTTPAddr:              ":8080",
-		MetricsAddr:           ":9091",
-		LogLevel:              slog.LevelInfo,
-		ShutdownTimeout:       15 * time.Second,
-		HTTPReadHeaderTimeout: 5 * time.Second,
-		HTTPReadTimeout:       10 * time.Second,
-		HTTPWriteTimeout:      10 * time.Second,
-		HTTPIdleTimeout:       60 * time.Second,
-		RequestTimeout:        5 * time.Second,
-		DatabaseURL:           "postgres://app@db:5432/app",
-		DBMaxConns:            20,
-		BidLocking:            "pessimistic",
-		DBIdleInTxTimeout:     5 * time.Second,
-		RedisURL:              "redis://cache:6379/0",
-		RedisTimeout:          200 * time.Millisecond,
+		HTTPAddr:               ":8080",
+		MetricsAddr:            ":9091",
+		LogLevel:               slog.LevelInfo,
+		ShutdownTimeout:        15 * time.Second,
+		HTTPReadHeaderTimeout:  5 * time.Second,
+		HTTPReadTimeout:        10 * time.Second,
+		HTTPWriteTimeout:       10 * time.Second,
+		HTTPIdleTimeout:        60 * time.Second,
+		RequestTimeout:         5 * time.Second,
+		DatabaseURL:            "postgres://app@db:5432/app",
+		DBMaxConns:             20,
+		BidLocking:             "pessimistic",
+		DBIdleInTxTimeout:      5 * time.Second,
+		RedisURL:               "redis://cache:6379/0",
+		RedisTimeout:           200 * time.Millisecond,
+		RateLimitBidsPerSecond: 10,
+		RateLimitBidBurst:      20,
 	}
 }
 
@@ -133,6 +138,16 @@ func TestLoad(t *testing.T) {
 			name:     "negative duration",
 			mutate:   func(env map[string]string) { env["SHUTDOWN_TIMEOUT"] = "-5s" },
 			wantErrs: []string{"SHUTDOWN_TIMEOUT: must be positive"},
+		},
+		{
+			name:     "rate that is not a number",
+			mutate:   func(env map[string]string) { env["RATE_LIMIT_BIDS_PER_SECOND"] = "fast" },
+			wantErrs: []string{`RATE_LIMIT_BIDS_PER_SECOND: invalid number "fast"`},
+		},
+		{
+			name:     "infinite rate",
+			mutate:   func(env map[string]string) { env["RATE_LIMIT_BIDS_PER_SECOND"] = "Inf" },
+			wantErrs: []string{`RATE_LIMIT_BIDS_PER_SECOND: invalid number "Inf"`},
 		},
 		{
 			name:     "unknown BID_LOCKING",

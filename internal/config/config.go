@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"strconv"
 	"time"
 )
@@ -49,6 +50,10 @@ type Config struct {
 	// RedisTimeout bounds every Redis operation. Redis is an accelerator,
 	// so callers degrade on timeout instead of failing (docs/decisions/017).
 	RedisTimeout time.Duration
+	// RateLimitBidsPerSecond and RateLimitBidBurst shape the per-user token
+	// bucket on bid placement (docs/decisions/018).
+	RateLimitBidsPerSecond float64
+	RateLimitBidBurst      int32
 	// BidLocking selects the bid path's concurrency strategy: "pessimistic"
 	// (row lock for the whole transaction, the default in .env.example) or
 	// "optimistic" (kept for benchmarking; see docs/decisions/014).
@@ -141,6 +146,17 @@ func Load(lookup LookupFunc) (Config, error) {
 		errs = append(errs, err)
 	} else {
 		cfg.RedisURL = v
+	}
+
+	if v, err := positiveFloat(lookup, "RATE_LIMIT_BIDS_PER_SECOND"); err != nil {
+		errs = append(errs, err)
+	} else {
+		cfg.RateLimitBidsPerSecond = v
+	}
+	if n, err := positiveInt32(lookup, "RATE_LIMIT_BID_BURST"); err != nil {
+		errs = append(errs, err)
+	} else {
+		cfg.RateLimitBidBurst = n
 	}
 
 	if v, err := required(lookup, "BID_LOCKING"); err != nil {
@@ -242,4 +258,20 @@ func positiveInt32(lookup LookupFunc, key string) (int32, error) {
 		return 0, fmt.Errorf("%s: must be positive, got %d", key, n)
 	}
 	return int32(n), nil
+}
+
+// positiveFloat parses key as a decimal number greater than zero.
+func positiveFloat(lookup LookupFunc, key string) (float64, error) {
+	v, err := required(lookup, key)
+	if err != nil {
+		return 0, err
+	}
+	f, err := strconv.ParseFloat(v, 64)
+	if err != nil || math.IsNaN(f) || math.IsInf(f, 0) {
+		return 0, fmt.Errorf("%s: invalid number %q", key, v)
+	}
+	if f <= 0 {
+		return 0, fmt.Errorf("%s: must be positive, got %v", key, f)
+	}
+	return f, nil
 }

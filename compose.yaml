@@ -85,6 +85,8 @@ services:
       DB_IDLE_IN_TX_TIMEOUT: ${DB_IDLE_IN_TX_TIMEOUT:?set DB_IDLE_IN_TX_TIMEOUT in .env}
       REDIS_URL: redis://redis:6379/0
       REDIS_TIMEOUT: ${REDIS_TIMEOUT:?set REDIS_TIMEOUT in .env}
+      RATE_LIMIT_BIDS_PER_SECOND: ${RATE_LIMIT_BIDS_PER_SECOND:?set RATE_LIMIT_BIDS_PER_SECOND in .env}
+      RATE_LIMIT_BID_BURST: ${RATE_LIMIT_BID_BURST:?set RATE_LIMIT_BID_BURST in .env}
     ports:
       - "127.0.0.1:${APP_HOST_PORT:?set APP_HOST_PORT in .env}:8080"
     # Hardening that costs nothing with a static binary: no writes to the
