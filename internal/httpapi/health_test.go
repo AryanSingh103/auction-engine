@@ -14,7 +14,7 @@ var discardLogger = slog.New(slog.DiscardHandler)
 
 func TestHealthz(t *testing.T) {
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/healthz", nil)
 
 	NewRouter(discardLogger).ServeHTTP(rec, req)
 
@@ -33,7 +33,7 @@ func TestHealthzRejectsOtherMethods(t *testing.T) {
 	for _, method := range []string{http.MethodPost, http.MethodPut, http.MethodDelete} {
 		t.Run(method, func(t *testing.T) {
 			rec := httptest.NewRecorder()
-			req := httptest.NewRequest(method, "/healthz", nil)
+			req := httptest.NewRequestWithContext(t.Context(), method, "/healthz", nil)
 
 			NewRouter(discardLogger).ServeHTTP(rec, req)
 
@@ -46,7 +46,7 @@ func TestHealthzRejectsOtherMethods(t *testing.T) {
 
 func TestUnknownPathIs404(t *testing.T) {
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/nope", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/nope", nil)
 
 	NewRouter(discardLogger).ServeHTTP(rec, req)
 

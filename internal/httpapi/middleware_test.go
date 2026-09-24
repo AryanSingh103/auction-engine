@@ -31,7 +31,7 @@ func serveLogged(t *testing.T, method, path string, h http.Handler) logLine {
 	logger := slog.New(slog.NewJSONHandler(&buf, nil))
 	handler := middleware.RequestID(requestLogger(logger)(h))
 
-	handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(method, path, nil))
+	handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequestWithContext(t.Context(), method, path, nil))
 
 	lines := bytes.Split(bytes.TrimSpace(buf.Bytes()), []byte("\n"))
 	if len(lines) != 1 {
@@ -118,7 +118,7 @@ func TestRecovererTurnsPanicInto500(t *testing.T) {
 	)))
 	rec := httptest.NewRecorder()
 
-	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/explode", nil))
+	handler.ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/explode", nil))
 
 	if rec.Code != http.StatusInternalServerError {
 		t.Errorf("response status = %d, want 500", rec.Code)
@@ -170,6 +170,6 @@ func TestRecovererRepanicsErrAbortHandler(t *testing.T) {
 			t.Errorf("recovered %v, want http.ErrAbortHandler to propagate", got)
 		}
 	}()
-	handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/", nil))
+	handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/", nil))
 	t.Error("ServeHTTP returned normally; want the ErrAbortHandler panic to propagate")
 }
