@@ -149,6 +149,8 @@ var serviceErrors = []struct {
 	{auction.ErrAuctionEnded, http.StatusConflict, "auction_ended"},
 	{auction.ErrSelfOutbid, http.StatusConflict, "self_outbid"},
 	{auction.ErrBidTooLow, http.StatusConflict, "bid_too_low"},
+	// Retry-safe: nothing was written, and the idempotency key covers it.
+	{auction.ErrContention, http.StatusServiceUnavailable, "contention"},
 }
 
 func writeServiceError(w http.ResponseWriter, r *http.Request, logger *slog.Logger, err error) {

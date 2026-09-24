@@ -32,6 +32,7 @@ func TestOutcomeOf(t *testing.T) {
 		{"guard too low", guard(ErrBidTooLow), false, OutcomeGuardBug},
 		{"deadline", fmt.Errorf("begin: %w", context.DeadlineExceeded), false, OutcomeTimeout},
 		{"cancelled", context.Canceled, false, OutcomeTimeout},
+		{"contention", ErrContention, false, OutcomeContention},
 		{"other", errors.New("connection reset"), false, OutcomeError},
 	}
 	for _, tt := range tests {

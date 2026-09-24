@@ -30,7 +30,9 @@ const (
 	// missed. Should stay at zero; alert on it.
 	OutcomeGuardBug Outcome = "guard_bug"
 	OutcomeTimeout  Outcome = "timeout"
-	OutcomeError    Outcome = "error"
+	// OutcomeContention: the optimistic strategy ran out of attempts.
+	OutcomeContention Outcome = "contention"
+	OutcomeError      Outcome = "error"
 )
 
 // AllOutcomes lists every Outcome.
@@ -38,7 +40,7 @@ var AllOutcomes = []Outcome{
 	OutcomeAccepted, OutcomeReplayed, OutcomeTooLow, OutcomeSelfOutbid, OutcomeEnded,
 	OutcomeNotOpen, OutcomeNotStarted, OutcomeIdempotencyConflict, OutcomeUnknownUser,
 	OutcomeNotFound, OutcomeInvalidAmount, OutcomeGuardBoundary, OutcomeGuardBug,
-	OutcomeTimeout, OutcomeError,
+	OutcomeTimeout, OutcomeContention, OutcomeError,
 }
 
 // OutcomeOf maps a PlaceBid result to its Outcome.
@@ -67,6 +69,7 @@ func OutcomeOf(err error, replayed bool) Outcome {
 		{ErrUnknownUser, OutcomeUnknownUser},
 		{ErrAuctionNotFound, OutcomeNotFound},
 		{ErrInvalidAmount, OutcomeInvalidAmount},
+		{ErrContention, OutcomeContention},
 		{context.DeadlineExceeded, OutcomeTimeout},
 		{context.Canceled, OutcomeTimeout},
 	} {
@@ -90,6 +93,9 @@ type Observer interface {
 	// BidTransaction is the duration of one bid transaction attempt, from
 	// BEGIN to COMMIT or ROLLBACK.
 	BidTransaction(time.Duration)
+	// OptimisticConflict is called each time an optimistic attempt finds
+	// that the auction head moved and must be retried (or gives up).
+	OptimisticConflict()
 }
 
 type nopObserver struct{}
@@ -97,6 +103,7 @@ type nopObserver struct{}
 func (nopObserver) BidOutcome(Outcome)           {}
 func (nopObserver) LockWait(time.Duration)       {}
 func (nopObserver) BidTransaction(time.Duration) {}
+func (nopObserver) OptimisticConflict()          {}
 
 // Option configures a Service.
 type Option func(*Service)

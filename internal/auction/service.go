@@ -17,13 +17,14 @@ import (
 // (row locks, constraints, triggers) only exists in the database, so it is
 // tested against a real one rather than mocked.
 type Service struct {
-	pool *pgxpool.Pool
-	obs  Observer
+	pool    *pgxpool.Pool
+	obs     Observer
+	locking Locking
 }
 
 // NewService returns a Service using pool.
 func NewService(pool *pgxpool.Pool, opts ...Option) *Service {
-	s := &Service{pool: pool, obs: nopObserver{}}
+	s := &Service{pool: pool, obs: nopObserver{}, locking: LockingPessimistic}
 	for _, o := range opts {
 		o(s)
 	}
@@ -59,7 +60,11 @@ type Bid struct {
 func (s *Service) PlaceBid(ctx context.Context, req PlaceBidRequest) (bid Bid, replayed bool, err error) {
 	defer func() { s.obs.BidOutcome(OutcomeOf(err, replayed)) }()
 
-	bid, replayed, err = s.placeBidTx(ctx, req)
+	if s.locking == LockingOptimistic {
+		bid, replayed, err = s.placeBidOptimistic(ctx, req)
+	} else {
+		bid, replayed, err = s.placeBidTx(ctx, req)
+	}
 	if isConstraintViolation(err, "bids_idempotency") {
 		// Same-key requests on the SAME auction are serialized by the row
 		// lock and resolved by the lookup inside the transaction. This path
@@ -131,44 +136,58 @@ func (s *Service) placeBidTx(ctx context.Context, req PlaceBidRequest) (bid Bid,
 
 		// 6. Write the bid, advance the auction head, and write the outbox
 		// event, all in this transaction (invariant 6).
-		var prev *int64
-		if a.Head != nil {
-			prev = &a.Head.BidID
-		}
-		bid = Bid{AuctionID: req.AuctionID, UserID: req.UserID, Amount: req.Amount, PrevBidID: prev}
-		if err := tx.QueryRow(ctx, `
-			INSERT INTO bids (auction_id, user_id, amount, prev_bid_id, idempotency_key)
-			VALUES ($1, $2, $3, $4, $5)
-			RETURNING id, created_at`,
-			req.AuctionID, req.UserID, req.Amount, prev, req.IdempotencyKey,
-		).Scan(&bid.ID, &bid.CreatedAt); err != nil {
-			return fmt.Errorf("insert bid: %w", err)
-		}
-
-		if _, err := tx.Exec(ctx, `
-			UPDATE auctions
-			SET current_price = $2, current_leader_id = $3, current_bid_id = $4
-			WHERE id = $1`,
-			req.AuctionID, req.Amount, req.UserID, bid.ID); err != nil {
-			return fmt.Errorf("advance auction head: %w", err)
-		}
-
-		payload, err := json.Marshal(bid)
-		if err != nil {
-			return fmt.Errorf("encode bid_placed event: %w", err)
-		}
-		if _, err := tx.Exec(ctx, `
-			INSERT INTO outbox (auction_id, event_type, payload, bid_id)
-			VALUES ($1, 'bid_placed', $2, $3)`,
-			req.AuctionID, payload, bid.ID); err != nil {
-			return fmt.Errorf("insert outbox event: %w", err)
-		}
-		return nil
+		bid, err = writeBid(ctx, tx, req, a, nil)
+		return err
 	})
 	if err != nil {
 		return Bid{}, false, mapDBError(err)
 	}
 	return bid, replayed, nil
+}
+
+// writeBid inserts the bid as the successor of a's head, advances the head
+// and writes the bid_placed outbox event. If insertTimed is non-nil it is
+// given the INSERT's duration: in the optimistic strategy that statement is
+// where the guard trigger takes the auction row lock.
+func writeBid(ctx context.Context, tx pgx.Tx, req PlaceBidRequest, a Auction, insertTimed func(time.Duration)) (Bid, error) {
+	var prev *int64
+	if a.Head != nil {
+		prev = &a.Head.BidID
+	}
+	bid := Bid{AuctionID: req.AuctionID, UserID: req.UserID, Amount: req.Amount, PrevBidID: prev}
+	insertStart := time.Now()
+	err := tx.QueryRow(ctx, `
+		INSERT INTO bids (auction_id, user_id, amount, prev_bid_id, idempotency_key)
+		VALUES ($1, $2, $3, $4, $5)
+		RETURNING id, created_at`,
+		req.AuctionID, req.UserID, req.Amount, prev, req.IdempotencyKey,
+	).Scan(&bid.ID, &bid.CreatedAt)
+	if insertTimed != nil {
+		insertTimed(time.Since(insertStart))
+	}
+	if err != nil {
+		return Bid{}, fmt.Errorf("insert bid: %w", err)
+	}
+
+	if _, err := tx.Exec(ctx, `
+		UPDATE auctions
+		SET current_price = $2, current_leader_id = $3, current_bid_id = $4
+		WHERE id = $1`,
+		req.AuctionID, req.Amount, req.UserID, bid.ID); err != nil {
+		return Bid{}, fmt.Errorf("advance auction head: %w", err)
+	}
+
+	payload, err := json.Marshal(bid)
+	if err != nil {
+		return Bid{}, fmt.Errorf("encode bid_placed event: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO outbox (auction_id, event_type, payload, bid_id)
+		VALUES ($1, 'bid_placed', $2, $3)`,
+		req.AuctionID, payload, bid.ID); err != nil {
+		return Bid{}, fmt.Errorf("insert outbox event: %w", err)
+	}
+	return bid, nil
 }
 
 // replay returns the bid previously accepted under req's idempotency key.
