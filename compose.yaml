@@ -103,6 +103,10 @@ services:
       # because migrate itself waits for that.
       migrate:
         condition: service_completed_successfully
+      # Started first so the cache and limiter work from the first request.
+      # The API does not require Redis to be healthy to serve (it degrades).
+      redis:
+        condition: service_started
 
   prometheus:
     image: prom/prometheus:v3.14.0

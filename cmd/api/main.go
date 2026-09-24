@@ -17,6 +17,8 @@ import (
 	"github.com/AryanSingh103/auction-engine/internal/httpapi"
 	"github.com/AryanSingh103/auction-engine/internal/metrics"
 	"github.com/AryanSingh103/auction-engine/internal/postgres"
+	"github.com/AryanSingh103/auction-engine/internal/ratelimit"
+	"github.com/AryanSingh103/auction-engine/internal/redisclient"
 )
 
 // main only translates run's error into an exit code. Keeping os.Exit out of
@@ -66,6 +68,13 @@ func run() error {
 	requestCtx, cancelRequests := context.WithCancel(context.Background())
 	defer cancelRequests()
 
+	rdb, err := redisclient.New(cfg.RedisURL, cfg.RedisTimeout)
+	if err != nil {
+		return err
+	}
+	// Closed after the pool (end of run); the defer covers early returns.
+	defer func() { _ = rdb.Close() }()
+
 	m := metrics.New()
 	m.RegisterPool(pool)
 
@@ -78,6 +87,9 @@ func run() error {
 			Ready:          pool.Ping,
 			RequestTimeout: cfg.RequestTimeout,
 			Metrics:        m.HTTPMiddleware,
+			BidLimiter: ratelimit.New(rdb, "ratelimit:",
+				cfg.RateLimitBidsPerSecond, int(cfg.RateLimitBidBurst)),
+			RecordRateLimit: m.RateLimitDecision,
 		}),
 		BaseContext:       func(net.Listener) context.Context { return requestCtx },
 		ReadHeaderTimeout: cfg.HTTPReadHeaderTimeout,
