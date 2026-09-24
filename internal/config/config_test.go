@@ -19,6 +19,10 @@ func validEnv() map[string]string {
 		"HTTP_READ_TIMEOUT":        "10s",
 		"HTTP_WRITE_TIMEOUT":       "10s",
 		"HTTP_IDLE_TIMEOUT":        "60s",
+		"REQUEST_TIMEOUT":          "5s",
+
+		"DATABASE_URL": "postgres://u:p@db:5432/app",
+		"DB_MAX_CONNS": "20",
 	}
 }
 
@@ -32,6 +36,9 @@ func validConfig() Config {
 		HTTPReadTimeout:       10 * time.Second,
 		HTTPWriteTimeout:      10 * time.Second,
 		HTTPIdleTimeout:       60 * time.Second,
+		RequestTimeout:        5 * time.Second,
+		DatabaseURL:           "postgres://u:p@db:5432/app",
+		DBMaxConns:            20,
 	}
 }
 
@@ -117,6 +124,38 @@ func TestLoad(t *testing.T) {
 			wantErrs: []string{"SHUTDOWN_TIMEOUT: must be positive"},
 		},
 		{
+			name:     "missing DATABASE_URL",
+			mutate:   func(env map[string]string) { delete(env, "DATABASE_URL") },
+			wantErrs: []string{"DATABASE_URL: required but not set"},
+		},
+		{
+			name:     "non-numeric DB_MAX_CONNS",
+			mutate:   func(env map[string]string) { env["DB_MAX_CONNS"] = "lots" },
+			wantErrs: []string{`DB_MAX_CONNS: invalid integer "lots"`},
+		},
+		{
+			name:     "zero DB_MAX_CONNS",
+			mutate:   func(env map[string]string) { env["DB_MAX_CONNS"] = "0" },
+			wantErrs: []string{"DB_MAX_CONNS: must be positive"},
+		},
+		{
+			name:     "DB_MAX_CONNS beyond int32",
+			mutate:   func(env map[string]string) { env["DB_MAX_CONNS"] = "3000000000" },
+			wantErrs: []string{`DB_MAX_CONNS: invalid integer "3000000000"`},
+		},
+		{
+			// A request deadline at or past the write timeout would let
+			// net/http kill the connection before the handler is cancelled.
+			name:     "REQUEST_TIMEOUT equal to HTTP_WRITE_TIMEOUT",
+			mutate:   func(env map[string]string) { env["REQUEST_TIMEOUT"] = "10s" },
+			wantErrs: []string{"REQUEST_TIMEOUT (10s) must be less than HTTP_WRITE_TIMEOUT (10s)"},
+		},
+		{
+			name:     "read header timeout above read timeout",
+			mutate:   func(env map[string]string) { env["HTTP_READ_HEADER_TIMEOUT"] = "11s" },
+			wantErrs: []string{"HTTP_READ_HEADER_TIMEOUT (11s) must not exceed HTTP_READ_TIMEOUT (10s)"},
+		},
+		{
 			name: "all problems reported at once",
 			mutate: func(env map[string]string) {
 				delete(env, "HTTP_ADDR")
@@ -162,5 +201,38 @@ func TestLoad(t *testing.T) {
 				t.Errorf("Load() returned partial config %+v alongside an error, want zero value", got)
 			}
 		})
+	}
+}
+
+func TestLoadSkipsCrossFieldChecksWhenADurationIsInvalid(t *testing.T) {
+	env := validEnv()
+	env["HTTP_WRITE_TIMEOUT"] = "never"
+
+	_, err := Load(lookupFrom(env))
+
+	if err == nil {
+		t.Fatal("Load() error = nil, want error")
+	}
+	if strings.Contains(err.Error(), "must be less than") {
+		t.Errorf("error mentions a cross-field rule although a duration failed to parse: %q", err)
+	}
+}
+
+func TestLoadMigrate(t *testing.T) {
+	got, err := LoadMigrate(lookupFrom(map[string]string{
+		"DATABASE_URL": "postgres://u:p@db:5432/app",
+		"LOG_LEVEL":    "warn",
+	}))
+	if err != nil {
+		t.Fatalf("LoadMigrate() unexpected error: %v", err)
+	}
+	want := MigrateConfig{DatabaseURL: "postgres://u:p@db:5432/app", LogLevel: slog.LevelWarn}
+	if got != want {
+		t.Errorf("LoadMigrate() = %+v, want %+v", got, want)
+	}
+
+	_, err = LoadMigrate(lookupFrom(map[string]string{}))
+	if err == nil || !strings.Contains(err.Error(), "DATABASE_URL: required") || !strings.Contains(err.Error(), "LOG_LEVEL: required") {
+		t.Errorf("LoadMigrate(empty) error = %v, want both variables reported", err)
 	}
 }

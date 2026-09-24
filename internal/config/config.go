@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"time"
 )
 
@@ -28,13 +29,32 @@ type Config struct {
 	HTTPReadTimeout       time.Duration
 	HTTPWriteTimeout      time.Duration
 	HTTPIdleTimeout       time.Duration
+
+	// RequestTimeout is the deadline put on every request's context. It must
+	// be shorter than HTTPWriteTimeout so a slow handler is cancelled (and
+	// answers 503) before net/http silently kills the connection.
+	RequestTimeout time.Duration
+
+	// DatabaseURL is a libpq-style connection string or URL for Postgres.
+	DatabaseURL string
+	// DBMaxConns caps the pgx connection pool. Every in-flight bid holds one
+	// connection for the length of its transaction, so this bounds how many
+	// bids can be waiting on the auction row lock at once.
+	DBMaxConns int32
+}
+
+// MigrateConfig is the configuration for the one-shot migrate command, which
+// needs far less than the API and must not require the API's settings.
+type MigrateConfig struct {
+	DatabaseURL string
+	LogLevel    slog.Level
 }
 
 // LookupFunc has the signature of os.LookupEnv. Taking it as a parameter lets
 // tests supply a map instead of mutating the process environment.
 type LookupFunc func(key string) (string, bool)
 
-// Load reads and validates all configuration using lookup.
+// Load reads and validates the API configuration using lookup.
 func Load(lookup LookupFunc) (Config, error) {
 	var cfg Config
 	var errs []error
@@ -45,10 +65,10 @@ func Load(lookup LookupFunc) (Config, error) {
 		cfg.HTTPAddr = v
 	}
 
-	if v, err := required(lookup, "LOG_LEVEL"); err != nil {
+	if lvl, err := logLevel(lookup); err != nil {
 		errs = append(errs, err)
-	} else if err := cfg.LogLevel.UnmarshalText([]byte(v)); err != nil {
-		errs = append(errs, fmt.Errorf("LOG_LEVEL: invalid value %q: must be debug, info, warn or error", v))
+	} else {
+		cfg.LogLevel = lvl
 	}
 
 	durations := []struct {
@@ -60,18 +80,68 @@ func Load(lookup LookupFunc) (Config, error) {
 		{"HTTP_READ_TIMEOUT", &cfg.HTTPReadTimeout},
 		{"HTTP_WRITE_TIMEOUT", &cfg.HTTPWriteTimeout},
 		{"HTTP_IDLE_TIMEOUT", &cfg.HTTPIdleTimeout},
+		{"REQUEST_TIMEOUT", &cfg.RequestTimeout},
 	}
+	durationsOK := true
 	for _, d := range durations {
 		v, err := positiveDuration(lookup, d.key)
 		if err != nil {
 			errs = append(errs, err)
+			durationsOK = false
 			continue
 		}
 		*d.dst = v
 	}
 
+	// Cross-field rules. Only checked when every duration parsed, so one bad
+	// value does not produce a second, confusing error about its relations.
+	if durationsOK {
+		if cfg.HTTPReadHeaderTimeout > cfg.HTTPReadTimeout {
+			errs = append(errs, fmt.Errorf("HTTP_READ_HEADER_TIMEOUT (%s) must not exceed HTTP_READ_TIMEOUT (%s)",
+				cfg.HTTPReadHeaderTimeout, cfg.HTTPReadTimeout))
+		}
+		if cfg.RequestTimeout >= cfg.HTTPWriteTimeout {
+			errs = append(errs, fmt.Errorf("REQUEST_TIMEOUT (%s) must be less than HTTP_WRITE_TIMEOUT (%s)",
+				cfg.RequestTimeout, cfg.HTTPWriteTimeout))
+		}
+	}
+
+	if v, err := required(lookup, "DATABASE_URL"); err != nil {
+		errs = append(errs, err)
+	} else {
+		cfg.DatabaseURL = v
+	}
+
+	if n, err := positiveInt32(lookup, "DB_MAX_CONNS"); err != nil {
+		errs = append(errs, err)
+	} else {
+		cfg.DBMaxConns = n
+	}
+
 	if len(errs) > 0 {
 		return Config{}, errors.Join(errs...)
+	}
+	return cfg, nil
+}
+
+// LoadMigrate reads and validates the migrate command's configuration.
+func LoadMigrate(lookup LookupFunc) (MigrateConfig, error) {
+	var cfg MigrateConfig
+	var errs []error
+
+	if v, err := required(lookup, "DATABASE_URL"); err != nil {
+		errs = append(errs, err)
+	} else {
+		cfg.DatabaseURL = v
+	}
+	if lvl, err := logLevel(lookup); err != nil {
+		errs = append(errs, err)
+	} else {
+		cfg.LogLevel = lvl
+	}
+
+	if len(errs) > 0 {
+		return MigrateConfig{}, errors.Join(errs...)
 	}
 	return cfg, nil
 }
@@ -85,6 +155,18 @@ func required(lookup LookupFunc, key string) (string, error) {
 		return "", fmt.Errorf("%s: required but not set", key)
 	}
 	return v, nil
+}
+
+func logLevel(lookup LookupFunc) (slog.Level, error) {
+	v, err := required(lookup, "LOG_LEVEL")
+	if err != nil {
+		return 0, err
+	}
+	var lvl slog.Level
+	if err := lvl.UnmarshalText([]byte(v)); err != nil {
+		return 0, fmt.Errorf("LOG_LEVEL: invalid value %q: must be debug, info, warn or error", v)
+	}
+	return lvl, nil
 }
 
 // positiveDuration parses key as a Go duration ("15s", "500ms") that must be
@@ -104,4 +186,21 @@ func positiveDuration(lookup LookupFunc, key string) (time.Duration, error) {
 		return 0, fmt.Errorf("%s: must be positive, got %s", key, d)
 	}
 	return d, nil
+}
+
+// positiveInt32 parses key as a base-10 integer in [1, MaxInt32]. int32
+// because that is what pgxpool.Config.MaxConns takes.
+func positiveInt32(lookup LookupFunc, key string) (int32, error) {
+	v, err := required(lookup, key)
+	if err != nil {
+		return 0, err
+	}
+	n, err := strconv.ParseInt(v, 10, 32)
+	if err != nil {
+		return 0, fmt.Errorf("%s: invalid integer %q", key, v)
+	}
+	if n <= 0 {
+		return 0, fmt.Errorf("%s: must be positive, got %d", key, n)
+	}
+	return int32(n), nil
 }

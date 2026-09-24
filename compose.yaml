@@ -44,6 +44,11 @@ services:
       HTTP_READ_TIMEOUT: ${HTTP_READ_TIMEOUT:?set HTTP_READ_TIMEOUT in .env}
       HTTP_WRITE_TIMEOUT: ${HTTP_WRITE_TIMEOUT:?set HTTP_WRITE_TIMEOUT in .env}
       HTTP_IDLE_TIMEOUT: ${HTTP_IDLE_TIMEOUT:?set HTTP_IDLE_TIMEOUT in .env}
+      REQUEST_TIMEOUT: ${REQUEST_TIMEOUT:?set REQUEST_TIMEOUT in .env}
+      # In-network address: the postgres service name, container port 5432.
+      # (.env's DATABASE_URL points at the host-published port for `make run`.)
+      DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?sslmode=disable
+      DB_MAX_CONNS: ${DB_MAX_CONNS:?set DB_MAX_CONNS in .env}
     ports:
       - "127.0.0.1:${APP_HOST_PORT:?set APP_HOST_PORT in .env}:8080"
     # Hardening that costs nothing with a static binary: no writes to the
