@@ -19,9 +19,13 @@ services:
       # .../data as in older versions); data lives in a versioned subdirectory.
       - pgdata:/var/lib/postgresql
     healthcheck:
+      # -h 127.0.0.1 forces a TCP check. Without it pg_isready uses the unix
+      # socket, which the image's temporary initdb server also listens on
+      # (it runs with listen_addresses=''), so the check would report healthy
+      # mid-initialization, just before that server restarts.
       # $$ escapes compose interpolation, so the variables are expanded by the
       # shell inside the container.
-      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
       interval: 2s
       timeout: 3s
       retries: 15
