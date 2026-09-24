@@ -12,6 +12,7 @@ import (
 func validEnv() map[string]string {
 	return map[string]string{
 		"HTTP_ADDR":        ":8080",
+		"METRICS_ADDR":     ":9091",
 		"LOG_LEVEL":        "info",
 		"SHUTDOWN_TIMEOUT": "15s",
 
@@ -32,6 +33,7 @@ func validEnv() map[string]string {
 func validConfig() Config {
 	return Config{
 		HTTPAddr:              ":8080",
+		MetricsAddr:           ":9091",
 		LogLevel:              slog.LevelInfo,
 		ShutdownTimeout:       15 * time.Second,
 		HTTPReadHeaderTimeout: 5 * time.Second,

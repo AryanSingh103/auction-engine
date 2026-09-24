@@ -18,6 +18,9 @@ type Config struct {
 	// HTTPAddr is the listen address, e.g. ":8080". Inside a container it
 	// must not be "localhost:..." or the server is unreachable from outside.
 	HTTPAddr string
+	// MetricsAddr is the listen address of the separate metrics server
+	// (/metrics). It is never the public port; see docs/decisions/013.
+	MetricsAddr string
 	// LogLevel is the minimum slog level that is emitted.
 	LogLevel slog.Level
 	// ShutdownTimeout bounds how long graceful shutdown waits for in-flight
@@ -68,6 +71,12 @@ func Load(lookup LookupFunc) (Config, error) {
 		errs = append(errs, err)
 	} else {
 		cfg.HTTPAddr = v
+	}
+
+	if v, err := required(lookup, "METRICS_ADDR"); err != nil {
+		errs = append(errs, err)
+	} else {
+		cfg.MetricsAddr = v
 	}
 
 	if lvl, err := logLevel(lookup); err != nil {

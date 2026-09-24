@@ -54,6 +54,8 @@ services:
       # Fixed inside the container: it must match the container side of the
       # port mapping below. HTTP_ADDR in .env only applies to `make run`.
       HTTP_ADDR: ":8080"
+      # Prometheus scrapes this inside the compose network; not published.
+      METRICS_ADDR: ":9091"
       LOG_LEVEL: ${LOG_LEVEL:?set LOG_LEVEL in .env}
       SHUTDOWN_TIMEOUT: ${SHUTDOWN_TIMEOUT:?set SHUTDOWN_TIMEOUT in .env}
       HTTP_READ_HEADER_TIMEOUT: ${HTTP_READ_HEADER_TIMEOUT:?set HTTP_READ_HEADER_TIMEOUT in .env}
