@@ -16,9 +16,19 @@ run: ## Run the API on the host with config from .env
 	@test -f .env || { echo ".env not found: cp .env.example .env"; exit 1; }
 	set -a && . ./.env && set +a && go run ./cmd/api
 
+.PHONY: migrate
+migrate: ## Apply pending migrations to the database in .env (host)
+	@test -f .env || { echo ".env not found: cp .env.example .env"; exit 1; }
+	set -a && . ./.env && set +a && go run ./cmd/migrate up
+
+.PHONY: migrate-status
+migrate-status: ## Show applied and pending migrations (host)
+	@test -f .env || { echo ".env not found: cp .env.example .env"; exit 1; }
+	set -a && . ./.env && set +a && go run ./cmd/migrate status
+
 .PHONY: build
-build: ## Build the API binary to bin/api
-	go build -o bin/api ./cmd/api
+build: ## Build the api and migrate binaries into bin/
+	go build -o bin/ ./cmd/api ./cmd/migrate
 
 .PHONY: test
 test: ## Run all tests
