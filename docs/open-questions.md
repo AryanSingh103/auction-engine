@@ -3,6 +3,7 @@
 Gaps in the brief's wording or mechanisms that would quietly break an invariant if nobody decided them. Each item is settled in the milestone shown and closed by an ADR in `docs/decisions/`. When one is resolved, mark it with the ADR number rather than deleting it.
 
 ## R1. `now()` vs `clock_timestamp()` in time checks (M1, M5): critical
+**Resolved in M1 (ADR 007, 008).** Measured: a `clock_timestamp()` in the target list of a `FOR UPDATE` select is evaluated before the lock wait when the holder did not modify the row. The bid path reads the clock in a separate statement after the lock, the guard trigger does the same, and a test fails if either regresses. M5 must keep this for the closer.
 In Postgres, `now()` returns the transaction's *start* time. Picture a bid transaction that starts before `end_at`, blocks on `SELECT ... FOR UPDATE` while the closer holds the row, and resumes after the close. It would still see `now() < end_at` and accept the bid, which violates invariant 4. Time checks made while holding the lock must use `clock_timestamp()`. The close-vs-bid race test must reproduce this exact interleaving.
 
 ## R2. Outbox publish ordering with multiple pollers (M4): critical
@@ -22,15 +23,18 @@ The brief sheds load when Kafka consumer lag passes a threshold. Bids don't depe
 To be discussed at M4.
 
 ## R5. Invariant wording gaps (M1)
+**Resolved in M1 (ADR 011).** The first bid must be ≥ starting_price. No self-outbid. Zero bids means no winner and no invoice. No reserve price.
 - An auction that closes with zero bids: no winner and no invoice? Invariant 1 then reads "at most one winner, and exactly one if there was an accepted bid".
 - Must the first bid be `>= starting_price`, or `>= starting_price + min_increment`?
 - May the current leader raise their own bid?
 - Is there a reserve price? (Proposal: no.)
 
 ## R6. Identity (M1)
+**Resolved in M1 (ADR 010).** `X-User-ID` header, with no real auth.
 Bids, per-user rate limits (M3) and invoices all need a user, but the brief defines no authentication. Proposal: an `X-User-ID` header checked against `users`, documented explicitly as "no real auth, out of scope".
 
 ## R7. Invariant 6 in both directions (M1)
+**Resolved in M1 (ADR 008).** A composite FK from outbox to bid, plus a deferred constraint trigger (AE007), plus invariant checks.
 "No outbox event without its bid" needs a link from outbox to bid: a nullable `bid_id` foreign key with a unique constraint. The invariant checker should also query for bids that have no event.
 
 ## R8. Redis pub/sub is fire-and-forget (M3)
@@ -49,6 +53,7 @@ Before the first `terraform apply`:
 Any step that creates billable resources needs the owner's explicit go-ahead.
 
 ## R11. Handler deadlines shorter than WriteTimeout (M1)
+**Resolved in M1.** The `requestTimeout` middleware, with `REQUEST_TIMEOUT < HTTP_WRITE_TIMEOUT` validated in config. A timed-out bid returns 503 and writes nothing.
 Found in the M0 review. When `WriteTimeout` expires, net/http kills the connection silently. The handler's context is **not** cancelled, the handler runs to completion (holding a DB connection and row locks from M1 on), and the request log records the status the handler wrote (e.g. 200), not what the client saw (EOF). M1 needs a request-deadline middleware (`context.WithTimeout`, below `WriteTimeout`) that DB calls honor. `http.TimeoutHandler` is the alternative, but it buffers responses and breaks hijacking, so it is unsuitable once WebSockets arrive.
 
 ## R12. WebSocket traps in the M0 server setup (M3)
