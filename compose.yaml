@@ -86,5 +86,19 @@ services:
       migrate:
         condition: service_completed_successfully
 
+  prometheus:
+    image: prom/prometheus:v3.14.0
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      # Local data only needs to outlive a benchmark session; this caps disk.
+      - --storage.tsdb.retention.time=2d
+    volumes:
+      - ./deploy/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - promdata:/prometheus
+    ports:
+      - "127.0.0.1:${PROMETHEUS_HOST_PORT:?set PROMETHEUS_HOST_PORT in .env}:9090"
+
 volumes:
   pgdata:
+  promdata:
