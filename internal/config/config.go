@@ -41,6 +41,11 @@ type Config struct {
 	// connection for the length of its transaction, so this bounds how many
 	// bids can be waiting on the auction row lock at once.
 	DBMaxConns int32
+	// DBIdleInTxTimeout makes Postgres end any session that sits idle inside
+	// an open transaction for longer than this. If an API host dies between
+	// statements while holding an auction row lock, the lock is released
+	// after this long instead of when TCP keepalive notices (~2 hours).
+	DBIdleInTxTimeout time.Duration
 }
 
 // MigrateConfig is the configuration for the one-shot migrate command, which
@@ -81,6 +86,7 @@ func Load(lookup LookupFunc) (Config, error) {
 		{"HTTP_WRITE_TIMEOUT", &cfg.HTTPWriteTimeout},
 		{"HTTP_IDLE_TIMEOUT", &cfg.HTTPIdleTimeout},
 		{"REQUEST_TIMEOUT", &cfg.RequestTimeout},
+		{"DB_IDLE_IN_TX_TIMEOUT", &cfg.DBIdleInTxTimeout},
 	}
 	durationsOK := true
 	for _, d := range durations {

@@ -23,6 +23,8 @@ func validEnv() map[string]string {
 
 		"DATABASE_URL": "postgres://app@db:5432/app",
 		"DB_MAX_CONNS": "20",
+
+		"DB_IDLE_IN_TX_TIMEOUT": "5s",
 	}
 }
 
@@ -39,6 +41,7 @@ func validConfig() Config {
 		RequestTimeout:        5 * time.Second,
 		DatabaseURL:           "postgres://app@db:5432/app",
 		DBMaxConns:            20,
+		DBIdleInTxTimeout:     5 * time.Second,
 	}
 }
 
