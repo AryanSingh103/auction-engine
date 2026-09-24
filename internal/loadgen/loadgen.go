@@ -469,6 +469,8 @@ func setup(ctx context.Context, pool *pgxpool.Pool, cfg Config) (auctions, users
 	return auctions, users, nil
 }
 
+var scrapeClient = &http.Client{Timeout: 10 * time.Second}
+
 // scrapeRequestCount returns the server's total http_requests_total across
 // all routes and statuses.
 func scrapeRequestCount(ctx context.Context, url string) (float64, error) {
@@ -476,7 +478,9 @@ func scrapeRequestCount(ctx context.Context, url string) (float64, error) {
 	if err != nil {
 		return 0, err
 	}
-	resp, err := http.DefaultClient.Do(req)
+	// Bounded: http.DefaultClient has no timeout, and a stalled metrics
+	// endpoint would otherwise hang the run forever.
+	resp, err := scrapeClient.Do(req)
 	if err != nil {
 		return 0, err
 	}
