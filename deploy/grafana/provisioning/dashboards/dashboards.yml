@@ -1,0 +1,9 @@
+apiVersion: 1
+providers:
+  - name: auction-engine
+    folder: auction-engine
+    type: file
+    # Edits made in the UI are not saved; change the JSON in the repo.
+    allowUiUpdates: false
+    options:
+      path: /var/lib/grafana/dashboards

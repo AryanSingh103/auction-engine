@@ -1,0 +1,10 @@
+# Provisioned at startup, so a fresh `make up` needs no manual setup.
+apiVersion: 1
+datasources:
+  - name: Prometheus
+    uid: prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    editable: false
