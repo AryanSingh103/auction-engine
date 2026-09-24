@@ -1,20 +1,21 @@
-# 001. Configuration from environment variables, hand-rolled, fail-fast
+# 001. Config from env vars: hand-rolled, fail-fast
 
 ## Context
-The brief requires all configuration to come from environment variables from the first commit, with no hardcoded hosts. The same binary will run on a laptop, in docker compose, in CI and on ECS, and each of these injects configuration as env vars.
+The brief requires all config to come from env vars, with no hardcoded hosts. The same binary runs on a laptop, in compose, in CI and on ECS, and all of them inject env vars.
 
 ## Decision
-A small stdlib-only loader (`internal/config`):
-- Every variable is required. There are no defaults in code.
-- Empty counts as missing.
-- Values are parsed into typed fields (`slog.Level`, `time.Duration`) at startup.
-- Every problem is collected with `errors.Join` and reported at once.
-- `Load` takes a lookup function (the signature of `os.LookupEnv`), so tests pass a map instead of mutating the process environment. That also keeps tests parallel-safe.
+`internal/config` is stdlib only:
+- every variable is required, with no defaults
+- empty counts as missing
+- values are parsed into typed fields at startup
+- all errors are reported together via `errors.Join`
+
+`Load` takes an `os.LookupEnv`-shaped function, so tests pass a map instead of mutating the process env.
 
 ## Alternatives considered
-- **viper:** built for layered file, flag and remote config with implicit precedence rules. We want exactly one source, so its features would only add ways to be surprised.
-- **caarlos0/env or envconfig:** less code, but it relies on reflection and struct tags. For a handful of variables, explicit code is easier to read, debug and explain.
-- **Defaults in code:** convenient, but a missing variable in production then silently becomes a laptop value. That's the "localhost buried in the code" failure the brief forbids.
+- **viper:** layered file, flag and remote sources with implicit precedence. We want exactly one source.
+- **caarlos0/env:** less code, but reflection and struct tags. For a few variables, explicit code is easier to debug and explain.
+- **Defaults in code:** then a missing variable in production silently becomes a laptop value, which is exactly the failure the brief forbids.
 
 ## Consequences
-Misconfiguration fails at boot with a complete list of problems, never at first use. Adding a variable costs a few explicit lines, and `.env.example` must be kept in sync by hand.
+Misconfiguration fails at boot with every problem listed, never at first use. Each new variable costs a few explicit lines, and `.env.example` must be kept in sync by hand.
