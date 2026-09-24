@@ -35,7 +35,11 @@ func requestLogger(logger *slog.Logger) func(http.Handler) http.Handler {
 				slog.String("path", r.URL.Path),
 				slog.Int("status", status),
 				slog.Int("bytes", ww.BytesWritten()),
-				slog.Duration("duration", time.Since(start)),
+				// slog's JSON handler encodes a Duration as integer
+				// nanoseconds, which is unreadable; milliseconds as a float
+				// keeps sub-millisecond precision and is what humans and log
+				// queries expect.
+				slog.Float64("duration_ms", float64(time.Since(start).Microseconds())/1000),
 				slog.String("request_id", middleware.GetReqID(r.Context())),
 			)
 		})

@@ -19,6 +19,8 @@ type logLine struct {
 	Status    int    `json:"status"`
 	Bytes     int    `json:"bytes"`
 	RequestID string `json:"request_id"`
+	// Pointer so a missing field is distinguishable from 0.
+	DurationMS *float64 `json:"duration_ms"`
 }
 
 // serveLogged runs one request through RequestID + requestLogger + h and
@@ -98,6 +100,9 @@ func TestRequestLogger(t *testing.T) {
 			}
 			if got.RequestID == "" {
 				t.Error("request_id is empty; RequestID middleware value not propagated")
+			}
+			if got.DurationMS == nil || *got.DurationMS < 0 {
+				t.Errorf("duration_ms = %v, want a non-negative number", got.DurationMS)
 			}
 		})
 	}

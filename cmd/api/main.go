@@ -81,7 +81,7 @@ func run() error {
 	// Restore default signal handling: a second Ctrl-C now kills the process
 	// immediately instead of being swallowed while we drain.
 	stop()
-	logger.Info("shutdown started", slog.Duration("timeout", cfg.ShutdownTimeout))
+	logger.Info("shutdown started", slog.String("timeout", cfg.ShutdownTimeout.String()))
 
 	// A fresh context: ctx is already cancelled, and deriving from it would
 	// give Shutdown zero time.
