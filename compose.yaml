@@ -118,6 +118,25 @@ services:
     depends_on:
       - prometheus
 
+  # Load generator, only started explicitly (make bench-smoke, scripts/bench.sh).
+  # It runs inside the compose network on purpose: from the host, traffic
+  # would cross colima's port forwarder, which could become the bottleneck
+  # being measured (docs/decisions/015).
+  loadgen:
+    build: .
+    profiles: [bench]
+    # The fixed flags live in the entrypoint because `docker compose run
+    # loadgen <args>` replaces `command` entirely; entrypoint args remain and
+    # the run's own flags are appended.
+    entrypoint:
+      - /loadgen
+      - --api-url=http://api:8080
+      - --metrics-url=http://api:9091/metrics
+      - --database-url=postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?sslmode=disable
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+
 volumes:
   pgdata:
   promdata:

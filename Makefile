@@ -36,8 +36,8 @@ migrate-status: ## Show applied and pending migrations (host)
 	set -a && . ./.env && set +a && go run ./cmd/migrate status
 
 .PHONY: build
-build: ## Build the api and migrate binaries into bin/
-	go build -o bin/ ./cmd/api ./cmd/migrate
+build: ## Build the api, migrate and loadgen binaries into bin/
+	go build -o bin/ ./cmd/api ./cmd/migrate ./cmd/loadgen
 
 .PHONY: test
 test: ## Run all tests
@@ -78,3 +78,7 @@ psql: ## Open psql inside the postgres container
 .PHONY: nuke
 nuke: ## Stop the stack AND delete the database volume (destroys all local data)
 	docker compose down -v
+
+.PHONY: bench-smoke
+bench-smoke: ## 10s load run (20 bidders, one auction) inside compose; fails if its checks fail
+	docker compose --profile bench run --rm --build loadgen --workers=20 --warmup=2s --duration=10s --out=- > /dev/null
