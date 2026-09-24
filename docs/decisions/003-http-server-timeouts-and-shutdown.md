@@ -1,20 +1,20 @@
 # 003. HTTP server timeouts and graceful shutdown
 
 ## Context
-Go's `http.Server` zero value has **no timeouts**, so one slow or idle client can hold a connection forever. Processes will also be stopped constantly: deploys, and the brief's own fault injection.
+The zero-value `http.Server` has no timeouts, so one slow or idle client can hold a connection forever. Processes will also be stopped constantly: deploys and fault injection.
 
 ## Decision
-All four timeouts are set, and each is required config:
-- `ReadHeaderTimeout` (5s) defeats Slowloris, where a client trickles headers slowly.
-- `ReadTimeout` (10s) bounds reading the whole request, body included.
-- `WriteTimeout` (10s) bounds the time from the end of the request read to the end of the response write.
-- `IdleTimeout` (75s) bounds keep-alive connections. It's kept above the ALB's 60s idle timeout to avoid 502s.
+All four timeouts are required config:
+- `ReadHeaderTimeout` (5s): defeats Slowloris.
+- `ReadTimeout` (10s): bounds reading headers plus body.
+- `WriteTimeout` (10s): starts when the **headers** are read, so reading the body eats into it (net/http `server.go`). When it expires, the connection dies silently: the handler keeps running and the log still says 200. Handler deadlines come in M1 (R11).
+- `IdleTimeout` (75s): bounds keep-alive connections. It sits above the ALB's 60s idle timeout to avoid 502s.
 
-On SIGINT or SIGTERM, `Shutdown` stops accepting connections, closes idle ones, and waits up to `SHUTDOWN_TIMEOUT` for in-flight requests. After that, `Close` force-closes what remains and the process exits 1. Both paths were verified by hand.
+On SIGINT or SIGTERM, `Shutdown` stops accepting connections and waits up to `SHUTDOWN_TIMEOUT` for in-flight requests. After that, we cancel every request context (`BaseContext`), `Close` the remaining connections, and exit 1.
 
 ## Alternatives considered
-- **Zero-value server or `http.ListenAndServe`:** unbounded, and cannot be shut down.
-- **Exiting immediately on signal:** in-flight requests would get connection resets.
+- **Zero-value server:** unbounded, and cannot be shut down.
+- **Exiting immediately on signal:** in-flight requests get connection resets.
 
 ## Consequences
-`Shutdown` does **not** drain hijacked (WebSocket) connections, and `WriteTimeout` would kill long-lived WebSocket streams. Both need rework in M3.
+`Shutdown` does not drain hijacked (WebSocket) connections, and `WriteTimeout` kills WebSocket streams. Both are M3 work (R12).
