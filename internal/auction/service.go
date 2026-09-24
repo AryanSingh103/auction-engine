@@ -54,9 +54,12 @@ type Bid struct {
 func (s *Service) PlaceBid(ctx context.Context, req PlaceBidRequest) (bid Bid, replayed bool, err error) {
 	bid, replayed, err = s.placeBidTx(ctx, req)
 	if isConstraintViolation(err, "bids_idempotency") {
-		// A concurrent request with the same key committed between our
-		// lookup and our insert. Our transaction has rolled back; answer
-		// with the winner's bid exactly as a later retry would get it.
+		// Same-key requests on the SAME auction are serialized by the row
+		// lock and resolved by the lookup inside the transaction. This path
+		// covers same-key requests on DIFFERENT auctions, which lock
+		// different rows: the loser's insert hits the unique constraint,
+		// its transaction rolls back, and it answers as a later retry would
+		// (here, always ErrIdempotencyConflict, since the auction differs).
 		return s.replay(ctx, req)
 	}
 	return bid, replayed, err
@@ -64,22 +67,7 @@ func (s *Service) PlaceBid(ctx context.Context, req PlaceBidRequest) (bid Bid, r
 
 func (s *Service) placeBidTx(ctx context.Context, req PlaceBidRequest) (bid Bid, replayed bool, err error) {
 	err = pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
-		// 1. Idempotency: a retry of an accepted bid returns the original.
-		// This runs before taking the lock, so replays never queue behind
-		// live bids.
-		prior, found, err := findBidByKey(ctx, tx, req.UserID, req.IdempotencyKey)
-		if err != nil {
-			return err
-		}
-		if found {
-			if prior.AuctionID != req.AuctionID || prior.Amount != req.Amount {
-				return ErrIdempotencyConflict
-			}
-			bid, replayed = prior, true
-			return nil
-		}
-
-		// 2. The bidder must exist. Checked before the lock so an unknown
+		// 1. The bidder must exist. Checked before the lock so an unknown
 		// user never holds up real bidders, and before validation so the
 		// caller learns about identity before bid rules.
 		var exists bool
@@ -90,11 +78,30 @@ func (s *Service) placeBidTx(ctx context.Context, req PlaceBidRequest) (bid Bid,
 			return ErrUnknownUser
 		}
 
-		// 3. Lock the auction row. Every other bid on this auction now waits
+		// 2. Lock the auction row. Every other bid on this auction now waits
 		// here until we commit or roll back.
 		a, err := lockAuction(ctx, tx, req.AuctionID)
 		if err != nil {
 			return err
+		}
+
+		// 3. Idempotency: a retry of an accepted bid returns the original.
+		// This MUST come after the lock. If it ran before, two copies of the
+		// same request could both miss here; the first then commits and
+		// becomes the leader, and the second, once it gets the lock, is
+		// rejected as "self-outbid" instead of being answered as a replay.
+		// After the lock, this statement sees every bid committed by earlier
+		// lock holders (READ COMMITTED takes a fresh snapshot per statement).
+		prior, found, err := findBidByKey(ctx, tx, req.UserID, req.IdempotencyKey)
+		if err != nil {
+			return err
+		}
+		if found {
+			if prior.AuctionID != req.AuctionID || prior.Amount != req.Amount {
+				return ErrIdempotencyConflict
+			}
+			bid, replayed = prior, true
+			return nil
 		}
 
 		// 4. Read the database clock only now that the lock is held. A
