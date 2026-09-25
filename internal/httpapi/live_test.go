@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -37,7 +38,7 @@ func startInstance(t *testing.T, pool *pgxpool.Pool, bus *live.Bus) *instance {
 		// the request deadline, and the handler must clear the server's
 		// write deadline.
 		RequestTimeout: 200 * time.Millisecond,
-		Live:           &LiveOptions{Hub: hub, PingInterval: time.Second, WriteTimeout: time.Second},
+		Live:           &LiveOptions{Hub: hub, PingInterval: time.Second, WriteTimeout: time.Second, Slots: make(chan struct{}, 100)},
 	}))
 	srv.Config.WriteTimeout = 300 * time.Millisecond
 	srv.Config.ReadTimeout = 300 * time.Millisecond
@@ -195,7 +196,7 @@ func TestLiveSyncBroadcastsCurrentHead(t *testing.T) {
 	svc := auction.NewService(pool)
 	srv := httptest.NewServer(NewRouter(Options{
 		Logger: discardLogger, Auctions: svc, Ready: pool.Ping, RequestTimeout: time.Second,
-		Live: &LiveOptions{Hub: hub, PingInterval: time.Second, WriteTimeout: time.Second},
+		Live: &LiveOptions{Hub: hub, PingInterval: time.Second, WriteTimeout: time.Second, Slots: make(chan struct{}, 100)},
 	}))
 	defer srv.Close()
 	defer hub.Close()
@@ -258,4 +259,45 @@ func TestLiveSyncIgnoresStaleCache(t *testing.T) {
 	if m.HeadBidID == nil || *m.HeadBidID != bid.ID {
 		t.Errorf("sync head = %v, want %d (Postgres), not the stale cached head", m.HeadBidID, bid.ID)
 	}
+}
+
+// Past the connection cap, new live connections are refused with 503
+// before upgrading, and a slot frees up when a connection ends.
+func TestLiveConnectionCap(t *testing.T) {
+	pool := server.NewDB(t, 4)
+	seedAuction(t, pool)
+	hub := live.NewHub(4, nil)
+	var active sync.WaitGroup
+	srv := httptest.NewServer(NewRouter(Options{
+		Logger: discardLogger, Auctions: auction.NewService(pool), Ready: pool.Ping, RequestTimeout: time.Second,
+		Live: &LiveOptions{Hub: hub, PingInterval: time.Second, WriteTimeout: time.Second,
+			Slots: make(chan struct{}, 1), Active: &active},
+	}))
+	defer srv.Close()
+
+	first := dialLive(t, srv, "1")
+	var snap snapshotMessage
+	readType(t, first, live.TypeSnapshot, &snap)
+
+	url := "ws" + strings.TrimPrefix(srv.URL, "http") + "/auctions/1/live"
+	_, resp, err := websocket.Dial(t.Context(), url, nil)
+	if resp != nil && resp.Body != nil {
+		_ = resp.Body.Close()
+	}
+	if err == nil || resp == nil || resp.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("second connection over the cap: err %v, resp %v; want 503", err, resp)
+	}
+
+	// Closing the first connection frees its slot, and Active reaches zero.
+	_ = first.Close(websocket.StatusNormalClosure, "")
+	waited := make(chan struct{})
+	go func() { active.Wait(); close(waited) }()
+	select {
+	case <-waited:
+	case <-time.After(3 * time.Second):
+		t.Fatal("handler did not finish after the client closed")
+	}
+	again := dialLive(t, srv, "1")
+	readType(t, again, live.TypeSnapshot, &snap)
+	hub.Close()
 }

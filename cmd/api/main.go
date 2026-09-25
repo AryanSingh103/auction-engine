@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
@@ -96,6 +97,8 @@ func run() error {
 		auction.WithLocking(auction.Locking(cfg.BidLocking)),
 		auction.WithCache(cache.New(rdb, cfg.AuctionCacheTTL, m.CacheOperation)),
 		auction.WithPublisher(bus))
+	// Running WebSocket handlers, awaited at shutdown (see below).
+	var liveHandlers sync.WaitGroup
 	syncDone := httpapi.RunLiveSync(liveCtx, svc, hub, cfg.WSSyncInterval, logger)
 
 	srv := &http.Server{
@@ -111,6 +114,8 @@ func run() error {
 			Live: &httpapi.LiveOptions{
 				Hub: hub, PingInterval: cfg.WSPingInterval, WriteTimeout: cfg.WSWriteTimeout,
 				OnConnections: m.LiveConnections,
+				Slots:         make(chan struct{}, cfg.WSMaxConnections),
+				Active:        &liveHandlers,
 			},
 		}),
 		BaseContext:       func(net.Listener) context.Context { return requestCtx },
@@ -229,13 +234,18 @@ func run() error {
 		}
 	}
 
-	// Give WebSocket handlers a moment to write their close frames (they
-	// are not waited for by Shutdown), then stop the live pipeline.
-	waitCtx, cancelWait := context.WithTimeout(context.Background(), time.Second)
-	for hub.Count() > 0 && waitCtx.Err() == nil {
-		time.Sleep(10 * time.Millisecond)
+	// Shutdown does not wait for hijacked (WebSocket) connections. The hub
+	// was closed by RegisterOnShutdown, so every handler is now writing its
+	// 1001 close frame; wait for them (bounded) before tearing down what
+	// they use. (The previous hub.Count() loop never waited: Close empties
+	// the rooms immediately. Found by the M3 adversarial review.)
+	handlersDone := make(chan struct{})
+	go func() { liveHandlers.Wait(); close(handlersDone) }()
+	select {
+	case <-handlersDone:
+	case <-time.After(cfg.WSWriteTimeout):
+		logger.Warn("live handlers still running after the close-frame wait")
 	}
-	cancelWait()
 	stopLive()
 	<-syncDone
 	<-busDone

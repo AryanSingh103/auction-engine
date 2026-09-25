@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/coder/websocket"
@@ -24,6 +25,17 @@ type LiveOptions struct {
 	WriteTimeout time.Duration
 	// OnConnections, if set, receives +1/-1 as connections open and close.
 	OnConnections func(delta int)
+	// Slots caps concurrent live connections on this instance: a buffered
+	// channel with one slot per allowed connection. When it is full, new
+	// connections get 503 before upgrading. Each connection costs two
+	// goroutines, a file descriptor and its send buffer, so an uncapped
+	// endpoint would let one client exhaust the process (found by the M3
+	// adversarial review). Required.
+	Slots chan struct{}
+	// Active, if set, tracks running live handlers so shutdown can wait
+	// for their close frames: http.Server.Shutdown does not wait for
+	// hijacked connections.
+	Active *sync.WaitGroup
 }
 
 type snapshotMessage struct {
@@ -54,8 +66,25 @@ func handleAuctionLive(svc *auction.Service, o LiveOptions, logger *slog.Logger)
 			writeError(w, logger, http.StatusNotFound, "auction_not_found", "auction not found")
 			return
 		}
-		// 404 before upgrading, as a normal HTTP response.
-		if _, err := svc.GetAuction(r.Context(), id); err != nil {
+		select {
+		case o.Slots <- struct{}{}:
+			defer func() { <-o.Slots }()
+		default:
+			w.Header().Set("Retry-After", "5")
+			writeError(w, logger, http.StatusServiceUnavailable, "too_many_connections", "live connection limit reached; retry later")
+			return
+		}
+		if o.Active != nil {
+			o.Active.Add(1)
+			defer o.Active.Done()
+		}
+
+		// 404 before upgrading, as a normal HTTP response. This route is
+		// outside the request deadline middleware, so reads get their own.
+		rctx, cancel := context.WithTimeout(r.Context(), o.WriteTimeout)
+		_, err := svc.GetAuction(rctx, id)
+		cancel()
+		if err != nil {
 			writeServiceError(w, r, logger, err)
 			return
 		}
@@ -95,7 +124,9 @@ func handleAuctionLive(svc *auction.Service, o LiveOptions, logger *slog.Logger)
 		// and cancels ctx when the client goes away.
 		ctx := conn.CloseRead(r.Context())
 
-		a, err := svc.GetAuction(ctx, id)
+		sctx, cancel := context.WithTimeout(ctx, o.WriteTimeout)
+		a, err := svc.GetAuction(sctx, id)
+		cancel()
 		if err != nil {
 			_ = conn.Close(websocket.StatusInternalError, "could not load auction")
 			return
