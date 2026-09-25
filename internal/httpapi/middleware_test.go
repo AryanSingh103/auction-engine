@@ -200,3 +200,16 @@ func TestRequestTimeoutSetsDeadline(t *testing.T) {
 		t.Errorf("context error = %v, want DeadlineExceeded", ctxErrAfter)
 	}
 }
+
+// A client-supplied Upgrade header must not suppress the 500 for a panic in
+// an ordinary handler.
+func TestRecovererIgnoresClientUpgradeHeader(t *testing.T) {
+	h := recoverer(discardLogger)(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { panic("boom") }))
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/auctions/1/bids", nil)
+	req.Header.Set("Upgrade", "websocket")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("status = %d, want 500", rec.Code)
+	}
+}

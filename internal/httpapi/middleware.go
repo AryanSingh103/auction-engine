@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 	"runtime/debug"
+	"sync/atomic"
 	"time"
 
 	"github.com/go-chi/chi/v5/middleware"
@@ -56,6 +57,8 @@ func requestLogger(logger *slog.Logger) func(http.Handler) http.Handler {
 func recoverer(logger *slog.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			hijacked := new(atomic.Bool)
+			r = r.WithContext(context.WithValue(r.Context(), hijackedKey{}, hijacked))
 			defer func() {
 				rec := recover()
 				if rec == nil {
@@ -72,9 +75,12 @@ func recoverer(logger *slog.Logger) func(http.Handler) http.Handler {
 					slog.String("stack", string(debug.Stack())),
 					slog.String("request_id", middleware.GetReqID(r.Context())),
 				)
-				// A WebSocket handler has hijacked the connection; writing an
-				// HTTP status now would only log an error (R12).
-				if r.Header.Get("Upgrade") != "" {
+				// A WebSocket handler hijacked the connection: an HTTP status
+				// can no longer be written (R12). This is a flag set by the
+				// handler after a successful upgrade, not the client's
+				// Upgrade header, which anyone can send to suppress the 500
+				// (found by the M3 adversarial review).
+				if hijacked.Load() {
 					return
 				}
 				// If the handler already started writing a response, this
@@ -100,5 +106,15 @@ func requestTimeout(d time.Duration) func(http.Handler) http.Handler {
 			defer cancel()
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
+	}
+}
+
+type hijackedKey struct{}
+
+// markHijacked records that the handler took over the connection, so the
+// recoverer will not try to write an HTTP error on it.
+func markHijacked(r *http.Request) {
+	if f, ok := r.Context().Value(hijackedKey{}).(*atomic.Bool); ok {
+		f.Store(true)
 	}
 }

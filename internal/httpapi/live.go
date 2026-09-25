@@ -74,6 +74,7 @@ func handleAuctionLive(svc *auction.Service, o LiveOptions, logger *slog.Logger)
 		if err != nil {
 			return // Accept has already written the HTTP error
 		}
+		markHijacked(r)
 		defer func() { _ = conn.CloseNow() }()
 
 		// Join BEFORE reading the snapshot: bids accepted in between are
