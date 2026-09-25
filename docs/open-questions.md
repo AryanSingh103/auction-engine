@@ -58,7 +58,7 @@ Found in the M0 review. When `WriteTimeout` expires, net/http kills the connecti
 
 ## R12. WebSocket traps in the M0 server setup (M3)
 Found in the M0 review:
-- The global `WriteTimeout` kills long-lived streams. Clear it per connection with `http.ResponseController(w).SetWriteDeadline(time.Time{})`, which works through chi's wrapper because it implements `Unwrap`.
+- ~~The global `WriteTimeout` kills long-lived streams.~~ **Wrong, corrected in M3:** a WebSocket upgrade hijacks the connection, and `net/http` clears the connection's deadlines on hijack (`server.go`, `conn.hijackLocked`). A mutation test confirmed it. The real trap was the *request deadline middleware*, which does cancel the stream (also mutation-tested), so the live route sits outside it. `WriteTimeout` would matter for non-hijacked streams (SSE, HTTP/2).
 - `Shutdown` does not track hijacked connections. Use `RegisterOnShutdown` to send close frames.
 - `recoverer` writes a 500 after a panic, even on a hijacked connection.
 - The request log's status is meaningless for upgraded connections.
