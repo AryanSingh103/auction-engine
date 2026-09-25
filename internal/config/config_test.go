@@ -29,6 +29,7 @@ func validEnv() map[string]string {
 		"DB_IDLE_IN_TX_TIMEOUT": "5s",
 		"REDIS_URL":             "redis://cache:6379/0",
 		"REDIS_TIMEOUT":         "200ms",
+		"AUCTION_CACHE_TTL":     "10s",
 
 		"RATE_LIMIT_BIDS_PER_SECOND": "10",
 		"RATE_LIMIT_BID_BURST":       "20",
@@ -53,6 +54,7 @@ func validConfig() Config {
 		DBIdleInTxTimeout:      5 * time.Second,
 		RedisURL:               "redis://cache:6379/0",
 		RedisTimeout:           200 * time.Millisecond,
+		AuctionCacheTTL:        10 * time.Second,
 		RateLimitBidsPerSecond: 10,
 		RateLimitBidBurst:      20,
 	}

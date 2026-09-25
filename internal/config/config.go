@@ -50,6 +50,9 @@ type Config struct {
 	// RedisTimeout bounds every Redis operation. Redis is an accelerator,
 	// so callers degrade on timeout instead of failing (docs/decisions/017).
 	RedisTimeout time.Duration
+	// AuctionCacheTTL bounds how long a cached auction state can be served
+	// if a post-commit refresh was lost (docs/decisions/019).
+	AuctionCacheTTL time.Duration
 	// RateLimitBidsPerSecond and RateLimitBidBurst shape the per-user token
 	// bucket on bid placement (docs/decisions/018).
 	RateLimitBidsPerSecond float64
@@ -111,6 +114,7 @@ func Load(lookup LookupFunc) (Config, error) {
 		{"REQUEST_TIMEOUT", &cfg.RequestTimeout},
 		{"DB_IDLE_IN_TX_TIMEOUT", &cfg.DBIdleInTxTimeout},
 		{"REDIS_TIMEOUT", &cfg.RedisTimeout},
+		{"AUCTION_CACHE_TTL", &cfg.AuctionCacheTTL},
 	}
 	durationsOK := true
 	for _, d := range durations {
