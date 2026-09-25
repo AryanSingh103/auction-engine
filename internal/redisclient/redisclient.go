@@ -25,6 +25,10 @@ func New(url string, timeout time.Duration) (*redis.Client, error) {
 	opts.DialTimeout = timeout
 	opts.ReadTimeout = timeout
 	opts.WriteTimeout = timeout
+	// Waiting for a free pooled connection is bounded too. The default
+	// (ReadTimeout + 1s) let callers pile up for over a second each when
+	// Redis stopped answering (found by the M3 adversarial review).
+	opts.PoolTimeout = timeout
 	// Retries would multiply the timeout on every call while Redis is down;
 	// callers already degrade, so one attempt is enough.
 	opts.MaxRetries = 0
