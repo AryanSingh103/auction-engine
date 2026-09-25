@@ -33,6 +33,10 @@ type Metrics struct {
 
 	rateLimit *prometheus.CounterVec
 	cache     *prometheus.CounterVec
+
+	liveConns   prometheus.Gauge
+	liveDropped *prometheus.CounterVec
+	liveBus     *prometheus.CounterVec
 }
 
 // New creates the metrics and registers them, plus the Go runtime and
@@ -71,7 +75,25 @@ func New() *Metrics {
 	for _, or := range [][2]string{{"get", "hit"}, {"get", "miss"}, {"get", "error"}, {"put", "stored"}, {"put", "stale"}, {"put", "error"}} {
 		m.cache.WithLabelValues(or[0], or[1])
 	}
-	m.registry.MustRegister(m.rateLimit, m.cache)
+	m.liveConns = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "live_connections",
+		Help: "Open WebSocket connections on this instance.",
+	})
+	m.liveDropped = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "live_dropped_total",
+		Help: "WebSocket subscribers dropped by the hub: slow (send buffer full) or shutdown.",
+	}, []string{"reason"})
+	m.liveBus = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "live_bus_messages_total",
+		Help: "Redis pub/sub bid events: publish (ok, error) and receive (ok, bad_message).",
+	}, []string{"op", "result"})
+	for _, r := range []string{"slow", "shutdown"} {
+		m.liveDropped.WithLabelValues(r)
+	}
+	for _, or := range [][2]string{{"publish", "ok"}, {"publish", "error"}, {"receive", "ok"}, {"receive", "bad_message"}} {
+		m.liveBus.WithLabelValues(or[0], or[1])
+	}
+	m.registry.MustRegister(m.rateLimit, m.cache, m.liveConns, m.liveDropped, m.liveBus)
 	return m
 }
 
@@ -133,3 +155,12 @@ func (m *Metrics) RateLimitDecision(result string) { m.rateLimit.WithLabelValues
 
 // CacheOperation counts one auction cache operation.
 func (m *Metrics) CacheOperation(op, result string) { m.cache.WithLabelValues(op, result).Inc() }
+
+// LiveConnections adjusts the open WebSocket connection gauge.
+func (m *Metrics) LiveConnections(delta int) { m.liveConns.Add(float64(delta)) }
+
+// LiveDropped counts a subscriber dropped by the hub.
+func (m *Metrics) LiveDropped(reason string) { m.liveDropped.WithLabelValues(reason).Inc() }
+
+// LiveBusMessage counts a pub/sub publish or receive.
+func (m *Metrics) LiveBusMessage(op, result string) { m.liveBus.WithLabelValues(op, result).Inc() }
