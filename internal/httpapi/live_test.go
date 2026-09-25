@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -26,22 +27,28 @@ type instance struct {
 	svc *auction.Service
 }
 
-func startInstance(t *testing.T, pool *pgxpool.Pool, bus *live.Bus) *instance {
+// startInstance starts an API instance. hostile gives it deliberately
+// short request and server timeouts, for the instance that holds the live
+// stream: the stream must be immune to them. The instance that takes bids
+// gets normal ones; a bid that legitimately takes >200ms on a loaded CI
+// machine must not fail the test (a suspected cause of one flaky failure).
+func startInstance(t *testing.T, pool *pgxpool.Pool, bus *live.Bus, hostile bool) *instance {
 	t.Helper()
+	requestTimeout, serverTimeout := 5*time.Second, 10*time.Second
+	if hostile {
+		requestTimeout, serverTimeout = 200*time.Millisecond, 300*time.Millisecond
+	}
 	hub := live.NewHub(16, nil)
 	ready, done := bus.Forward(t.Context(), hub)
 	<-ready
 	svc := auction.NewService(pool, auction.WithPublisher(bus))
 	srv := httptest.NewUnstartedServer(NewRouter(Options{
 		Logger: discardLogger, Auctions: svc, Ready: pool.Ping,
-		// Both far shorter than the test: the live route must be immune to
-		// the request deadline, and the handler must clear the server's
-		// write deadline.
-		RequestTimeout: 200 * time.Millisecond,
+		RequestTimeout: requestTimeout,
 		Live:           &LiveOptions{Hub: hub, PingInterval: time.Second, WriteTimeout: time.Second, Slots: make(chan struct{}, 100)},
 	}))
-	srv.Config.WriteTimeout = 300 * time.Millisecond
-	srv.Config.ReadTimeout = 300 * time.Millisecond
+	srv.Config.WriteTimeout = serverTimeout
+	srv.Config.ReadTimeout = serverTimeout
 	srv.Start()
 	t.Cleanup(func() {
 		hub.Close()
@@ -111,9 +118,10 @@ func postBid(t *testing.T, srv *httptest.Server, user, key string, amount int) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	body, _ := io.ReadAll(resp.Body)
 	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusCreated {
-		t.Fatalf("bid status %d, want 201", resp.StatusCode)
+		t.Fatalf("bid status %d, want 201; body %s", resp.StatusCode, body)
 	}
 }
 
@@ -125,7 +133,7 @@ func TestLiveStreamAcrossInstances(t *testing.T) {
 	pool := server.NewDB(t, 8)
 	seedAuction(t, pool)
 	bus := live.NewBus(redisServer.NewClient(t), nil)
-	a, b := startInstance(t, pool, bus), startInstance(t, pool, bus)
+	a, b := startInstance(t, pool, bus, true), startInstance(t, pool, bus, false)
 
 	conn := dialLive(t, a.srv, "1")
 	var snap snapshotMessage
@@ -153,7 +161,7 @@ func TestLiveStreamAcrossInstances(t *testing.T) {
 
 func TestLiveUnknownAuctionIs404(t *testing.T) {
 	pool := server.NewDB(t, 4)
-	a := startInstance(t, pool, live.NewBus(redisServer.NewClient(t), nil))
+	a := startInstance(t, pool, live.NewBus(redisServer.NewClient(t), nil), false)
 	url := "ws" + strings.TrimPrefix(a.srv.URL, "http") + "/auctions/99/live"
 	_, resp, err := websocket.Dial(t.Context(), url, nil)
 	if resp != nil && resp.Body != nil {
@@ -170,7 +178,7 @@ func TestLiveUnknownAuctionIs404(t *testing.T) {
 func TestLiveShutdownClosesWithGoingAway(t *testing.T) {
 	pool := server.NewDB(t, 4)
 	seedAuction(t, pool)
-	a := startInstance(t, pool, live.NewBus(redisServer.NewClient(t), nil))
+	a := startInstance(t, pool, live.NewBus(redisServer.NewClient(t), nil), false)
 	conn := dialLive(t, a.srv, "1")
 	var snap snapshotMessage
 	readType(t, conn, live.TypeSnapshot, &snap)
