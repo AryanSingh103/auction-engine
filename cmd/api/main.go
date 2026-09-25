@@ -87,14 +87,9 @@ func run() error {
 	bus := live.NewBus(rdb, m.LiveBusMessage)
 	liveCtx, stopLive := context.WithCancel(context.Background())
 	defer stopLive()
-	busDone, err := bus.Forward(liveCtx, hub)
-	if err != nil {
-		// Redis is an accelerator: without it the API still serves bids
-		// and reads; only live updates are missing (ADR 017). go-redis
-		// cannot resubscribe a subscription that never started, so this
-		// is logged loudly rather than retried.
-		logger.Error("live updates disabled: could not subscribe to Redis", slog.Any("error", err))
-	}
+	// Forward retries until Redis is reachable, so an instance started
+	// during a Redis outage still gets live updates afterwards.
+	_, busDone := bus.Forward(liveCtx, hub)
 
 	svc := auction.NewService(pool,
 		auction.WithObserver(m),
@@ -243,9 +238,7 @@ func run() error {
 	cancelWait()
 	stopLive()
 	<-syncDone
-	if busDone != nil {
-		<-busDone
-	}
+	<-busDone
 
 	// Every handler has returned, so no connection is in use; closing the
 	// pool now ends the database sessions cleanly instead of leaving the

@@ -85,12 +85,12 @@ func New() *Metrics {
 	}, []string{"reason"})
 	m.liveBus = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "live_bus_messages_total",
-		Help: "Redis pub/sub bid events: publish (ok, error) and receive (ok, bad_message).",
+		Help: "Redis pub/sub: publish (ok, error), subscribe attempts (ok, error) and receive (ok, bad_message).",
 	}, []string{"op", "result"})
 	for _, r := range []string{"slow", "shutdown"} {
 		m.liveDropped.WithLabelValues(r)
 	}
-	for _, or := range [][2]string{{"publish", "ok"}, {"publish", "error"}, {"receive", "ok"}, {"receive", "bad_message"}} {
+	for _, or := range [][2]string{{"publish", "ok"}, {"publish", "error"}, {"subscribe", "ok"}, {"subscribe", "error"}, {"receive", "ok"}, {"receive", "bad_message"}} {
 		m.liveBus.WithLabelValues(or[0], or[1])
 	}
 	m.registry.MustRegister(m.rateLimit, m.cache, m.liveConns, m.liveDropped, m.liveBus)

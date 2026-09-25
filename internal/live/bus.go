@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/redis/go-redis/v9"
 
@@ -52,8 +53,8 @@ type Bus struct {
 	record func(op, result string)
 }
 
-// NewBus returns a Bus. record, if non-nil, receives ("publish", "ok"|"error")
-// and ("receive", "ok"|"bad_message").
+// NewBus returns a Bus. record, if non-nil, receives ("publish", "ok"|"error"),
+// ("subscribe", "ok"|"error") and ("receive", "ok"|"bad_message").
 func NewBus(rdb *redis.Client, record func(op, result string)) *Bus {
 	if record == nil {
 		record = func(string, string) {}
@@ -77,41 +78,63 @@ func (b *Bus) PublishBid(ctx context.Context, bid auction.Bid) error {
 }
 
 // Forward subscribes to every auction's channel and broadcasts each message
-// to the hub's room for that auction. It returns once the subscription is
-// confirmed; delivery continues in the background until ctx is cancelled,
-// after which done is closed.
+// to the hub's room for that auction, until ctx is cancelled (then done is
+// closed). ready is closed the first time the subscription is confirmed.
 //
-// While the Redis connection is down, go-redis reconnects and resubscribes
-// on its own, but messages published meanwhile are lost. Clients detect
-// that through the bid chain and the periodic sync (docs/decisions/020).
-func (b *Bus) Forward(ctx context.Context, hub *Hub) (done <-chan struct{}, err error) {
-	ps := b.rdb.PSubscribe(ctx, channelPrefix+"*"+channelSuffix)
-	if _, err := ps.Receive(ctx); err != nil { // the subscription confirmation
-		_ = ps.Close()
-		return nil, fmt.Errorf("subscribe to auction events: %w", err)
-	}
-	d := make(chan struct{})
+// If Redis is unreachable it keeps retrying with capped backoff instead of
+// giving up: an instance that started while Redis was down must still get
+// live updates once Redis is back (found by the M3 adversarial review).
+// Once subscribed, go-redis reconnects and resubscribes on its own, but
+// messages published meanwhile are lost; clients detect that through the
+// bid chain and the periodic sync (docs/decisions/020).
+func (b *Bus) Forward(ctx context.Context, hub *Hub) (ready, done <-chan struct{}) {
+	readyCh, d := make(chan struct{}), make(chan struct{})
 	go func() {
+		r := readyCh
 		defer close(d)
-		defer func() { _ = ps.Close() }()
-		msgs := ps.Channel()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case m, ok := <-msgs:
-				if !ok {
+		backoff := 100 * time.Millisecond
+		for ctx.Err() == nil {
+			ps := b.rdb.PSubscribe(ctx, channelPrefix+"*"+channelSuffix)
+			if _, err := ps.Receive(ctx); err != nil { // the subscription confirmation
+				_ = ps.Close()
+				b.record("subscribe", "error")
+				select {
+				case <-ctx.Done():
 					return
+				case <-time.After(backoff):
 				}
-				id, ok := auctionIDFromChannel(m.Channel)
-				if !ok {
-					b.record("receive", "bad_message")
-					continue
-				}
-				b.record("receive", "ok")
-				hub.Broadcast(id, []byte(m.Payload))
+				backoff = min(2*backoff, 5*time.Second)
+				continue
 			}
+			b.record("subscribe", "ok")
+			if r != nil {
+				close(r)
+				r = nil
+			}
+			b.deliver(ctx, ps, hub)
+			_ = ps.Close()
 		}
 	}()
-	return d, nil
+	return readyCh, d
+}
+
+func (b *Bus) deliver(ctx context.Context, ps *redis.PubSub, hub *Hub) {
+	msgs := ps.Channel()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case m, ok := <-msgs:
+			if !ok {
+				return // the subscription ended; Forward resubscribes
+			}
+			id, ok := auctionIDFromChannel(m.Channel)
+			if !ok {
+				b.record("receive", "bad_message")
+				continue
+			}
+			b.record("receive", "ok")
+			hub.Broadcast(id, []byte(m.Payload))
+		}
+	}
 }

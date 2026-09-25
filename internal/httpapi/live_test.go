@@ -28,10 +28,8 @@ type instance struct {
 func startInstance(t *testing.T, pool *pgxpool.Pool, bus *live.Bus) *instance {
 	t.Helper()
 	hub := live.NewHub(16, nil)
-	done, err := bus.Forward(t.Context(), hub)
-	if err != nil {
-		t.Fatal(err)
-	}
+	ready, done := bus.Forward(t.Context(), hub)
+	<-ready
 	svc := auction.NewService(pool, auction.WithPublisher(bus))
 	srv := httptest.NewUnstartedServer(NewRouter(Options{
 		Logger: discardLogger, Auctions: svc, Ready: pool.Ping,
