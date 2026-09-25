@@ -54,10 +54,11 @@ type Config struct {
 	// if a post-commit refresh was lost (docs/decisions/019).
 	AuctionCacheTTL time.Duration
 	// Live (WebSocket) settings; docs/decisions/020.
-	WSSendBuffer   int32         // messages buffered per connection before it is dropped as slow
-	WSPingInterval time.Duration // keepalive ping; must be well under proxy idle timeouts
-	WSWriteTimeout time.Duration // bound on each message write and ping
-	WSSyncInterval time.Duration // how often each room gets the current head
+	WSSendBuffer     int32         // messages buffered per connection before it is dropped as slow
+	WSPingInterval   time.Duration // keepalive ping; must be well under proxy idle timeouts
+	WSWriteTimeout   time.Duration // bound on each message write and ping
+	WSSyncInterval   time.Duration // how often each room gets the current head
+	WSMaxConnections int32         // cap on concurrent live connections per instance
 	// RateLimitBidsPerSecond and RateLimitBidBurst shape the per-user token
 	// bucket on bid placement (docs/decisions/018).
 	RateLimitBidsPerSecond float64
@@ -158,6 +159,12 @@ func Load(lookup LookupFunc) (Config, error) {
 		errs = append(errs, err)
 	} else {
 		cfg.RedisURL = v
+	}
+
+	if n, err := positiveInt32(lookup, "WS_MAX_CONNECTIONS"); err != nil {
+		errs = append(errs, err)
+	} else {
+		cfg.WSMaxConnections = n
 	}
 
 	if n, err := positiveInt32(lookup, "WS_SEND_BUFFER"); err != nil {
