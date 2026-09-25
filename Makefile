@@ -84,3 +84,7 @@ bench-smoke: ## 10s load run (20 bidders, one auction) inside compose; fails if 
 	RATE_LIMIT_BIDS_PER_SECOND=1000000 RATE_LIMIT_BID_BURST=1000000 docker compose up -d --wait --build api
 	docker compose --profile bench run --rm --build loadgen --workers=20 --warmup=2s --duration=10s --out=- > /dev/null
 	docker compose up -d --wait api
+
+.PHONY: test-page
+test-page: ## Check the live page's client contract (needs Node)
+	node internal/httpapi/web/contract_test.js

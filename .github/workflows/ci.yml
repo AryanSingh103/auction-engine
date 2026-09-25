@@ -46,6 +46,10 @@ jobs:
       # Docker engine; the race detector is on for every test.
       - name: Test with race detector
         run: make test-race
+      # The live page's client logic (gap detection, ordering) is part of the
+      # delivery contract; Node is preinstalled on ubuntu runners.
+      - name: Test live page client contract
+        run: make test-page
 
   docker:
     runs-on: ubuntu-latest
