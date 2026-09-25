@@ -72,6 +72,11 @@ func recoverer(logger *slog.Logger) func(http.Handler) http.Handler {
 					slog.String("stack", string(debug.Stack())),
 					slog.String("request_id", middleware.GetReqID(r.Context())),
 				)
+				// A WebSocket handler has hijacked the connection; writing an
+				// HTTP status now would only log an error (R12).
+				if r.Header.Get("Upgrade") != "" {
+					return
+				}
 				// If the handler already started writing a response, this
 				// status cannot be sent; the client sees a truncated reply.
 				w.WriteHeader(http.StatusInternalServerError)

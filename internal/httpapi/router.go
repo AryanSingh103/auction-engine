@@ -27,6 +27,8 @@ type Options struct {
 	Metrics func(http.Handler) http.Handler
 	// BidLimiter, if set, rate-limits bid placement per user.
 	BidLimiter BidLimiter
+	// Live, if set, enables GET /auctions/{auctionID}/live (WebSocket).
+	Live *LiveOptions
 	// RecordRateLimit receives each limiter decision ("allowed", "limited",
 	// "error") for metrics. Optional.
 	RecordRateLimit func(result string)
@@ -39,7 +41,7 @@ type Options struct {
 // logger wraps everything after it so it sees the final status code,
 // including the 500 written by recoverer, which must sit inside the logger.
 // The request deadline is innermost so its clock starts as close to the
-// handler as possible.
+// handler as possible, and it does not apply to the WebSocket route.
 func NewRouter(o Options) http.Handler {
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
@@ -49,23 +51,33 @@ func NewRouter(o Options) http.Handler {
 		r.Use(o.Metrics)
 	}
 	r.Use(recoverer(o.Logger))
-	r.Use(requestTimeout(o.RequestTimeout))
 
-	r.Get("/healthz", handleHealthz)
-	r.Get("/readyz", handleReadyz(o.Ready, o.Logger))
+	// Long-lived WebSocket streams live outside the request deadline group:
+	// REQUEST_TIMEOUT would cancel them after a few seconds.
+	if o.Live != nil {
+		r.Get("/auctions/{auctionID}/live", handleAuctionLive(o.Auctions, *o.Live, o.Logger))
+	}
 
-	r.Get("/auctions/{auctionID}", handleGetAuction(o.Auctions, o.Logger))
 	r.Group(func(r chi.Router) {
-		// Only bid placement is rate limited; reads are served from cache
-		// and cheap, and limiting them would hide the auction from bidders.
-		if o.BidLimiter != nil {
-			record := o.RecordRateLimit
-			if record == nil {
-				record = func(string) {}
+		r.Use(requestTimeout(o.RequestTimeout))
+
+		r.Get("/healthz", handleHealthz)
+		r.Get("/readyz", handleReadyz(o.Ready, o.Logger))
+		r.Get("/auctions/{auctionID}", handleGetAuction(o.Auctions, o.Logger))
+
+		r.Group(func(r chi.Router) {
+			// Only bid placement is rate limited; reads are served from
+			// cache and cheap, and limiting them would hide the auction
+			// from bidders.
+			if o.BidLimiter != nil {
+				record := o.RecordRateLimit
+				if record == nil {
+					record = func(string) {}
+				}
+				r.Use(rateLimitBids(o.BidLimiter, o.Logger, record))
 			}
-			r.Use(rateLimitBids(o.BidLimiter, o.Logger, record))
-		}
-		r.Post("/auctions/{auctionID}/bids", handlePlaceBid(o.Auctions, o.Logger))
+			r.Post("/auctions/{auctionID}/bids", handlePlaceBid(o.Auctions, o.Logger))
+		})
 	})
 
 	return r

@@ -33,7 +33,10 @@ type auctionResponse struct {
 	Status          auction.Status `json:"status"`
 	CurrentPrice    *int64         `json:"current_price"`
 	CurrentLeaderID *int64         `json:"current_leader_id"`
-	MinimumBid      int64          `json:"minimum_bid"`
+	// CurrentBidID is the head of the bid chain: live clients compare it
+	// with incoming bids' prev_bid_id to detect missed messages.
+	CurrentBidID *int64 `json:"current_bid_id"`
+	MinimumBid   int64  `json:"minimum_bid"`
 }
 
 func handleGetAuction(svc *auction.Service, logger *slog.Logger) http.HandlerFunc {
@@ -48,16 +51,20 @@ func handleGetAuction(svc *auction.Service, logger *slog.Logger) http.HandlerFun
 			writeServiceError(w, r, logger, err)
 			return
 		}
-		resp := auctionResponse{
-			ID: a.ID, ItemID: a.ItemID, StartAt: a.StartAt, EndAt: a.EndAt,
-			StartingPrice: a.StartingPrice, MinIncrement: a.MinIncrement, Status: a.Status,
-			MinimumBid: a.MinimumBid(),
-		}
-		if a.Head != nil {
-			resp.CurrentPrice, resp.CurrentLeaderID = &a.Head.Price, &a.Head.UserID
-		}
-		writeJSON(w, logger, http.StatusOK, resp)
+		writeJSON(w, logger, http.StatusOK, toAuctionResponse(a))
 	}
+}
+
+func toAuctionResponse(a auction.Auction) auctionResponse {
+	resp := auctionResponse{
+		ID: a.ID, ItemID: a.ItemID, StartAt: a.StartAt, EndAt: a.EndAt,
+		StartingPrice: a.StartingPrice, MinIncrement: a.MinIncrement, Status: a.Status,
+		MinimumBid: a.MinimumBid(),
+	}
+	if a.Head != nil {
+		resp.CurrentPrice, resp.CurrentLeaderID, resp.CurrentBidID = &a.Head.Price, &a.Head.UserID, &a.Head.BidID
+	}
+	return resp
 }
 
 type placeBidBody struct {
