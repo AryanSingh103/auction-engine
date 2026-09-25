@@ -60,7 +60,7 @@ services:
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
 
-  api:
+  api: &api
     build: .
     # An explicit list instead of env_file: .env, so the API receives only
     # its own settings (not POSTGRES_PASSWORD, which it does not need yet).
@@ -92,8 +92,6 @@ services:
       WS_SYNC_INTERVAL: ${WS_SYNC_INTERVAL:?set WS_SYNC_INTERVAL in .env}
       RATE_LIMIT_BIDS_PER_SECOND: ${RATE_LIMIT_BIDS_PER_SECOND:?set RATE_LIMIT_BIDS_PER_SECOND in .env}
       RATE_LIMIT_BID_BURST: ${RATE_LIMIT_BID_BURST:?set RATE_LIMIT_BID_BURST in .env}
-    ports:
-      - "127.0.0.1:${APP_HOST_PORT:?set APP_HOST_PORT in .env}:8080"
     # Hardening that costs nothing with a static binary: no writes to the
     # image filesystem, no Linux capabilities, no privilege escalation via
     # setuid binaries.
@@ -112,6 +110,17 @@ services:
       # The API does not require Redis to be healthy to serve (it degrades).
       redis:
         condition: service_started
+    ports:
+      - "127.0.0.1:${APP_HOST_PORT:?set APP_HOST_PORT in .env}:8080"
+
+  # A second API instance, so cross-instance behavior (Redis pub/sub
+  # fan-out, the shared rate-limit buckets, the shared cache) is exercised
+  # locally. Same configuration; only the host port differs. In M6 both sit
+  # behind the ALB.
+  api2:
+    <<: *api
+    ports:
+      - "127.0.0.1:${APP2_HOST_PORT:?set APP2_HOST_PORT in .env}:8080"
 
   prometheus:
     image: prom/prometheus:v3.14.0
