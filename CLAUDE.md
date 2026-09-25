@@ -102,6 +102,7 @@ Run `make help` for the full list. The ones you'll use most:
 - `make up` / `make down`: the full stack in docker compose (postgres, then the one-shot migrate, then api). `make nuke` also **deletes the database volume**.
 - `make migrate`, `make migrate-status`: goose migrations against `.env`'s `DATABASE_URL`.
 - `make test`, `make test-race`, `make vet`, `make fmt-check`, `make lint`: all must be clean before a milestone closes. The tests **need Docker running**, because integration tests start Postgres through testcontainers. The Makefile points testcontainers at the active docker context (colima), so a plain `go test` outside make needs `DOCKER_HOST` and `TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE` set the same way.
+- `make test-page`: the live page's client-contract test (needs Node). CI runs it too.
 - `make psql`: a psql shell inside the Postgres container. `make logs`: follow every compose service.
 - **Two API instances** in compose: `api` on :8080 and `api2` on :8081. The live page is at `http://localhost:8080/`.
 - **Observability:**
@@ -145,7 +146,7 @@ Database error codes: the guard trigger raises `AE001`–`AE006` and the deferre
 
 ## Current status
 
-**Milestone 3 is in close-out (2026-09-25):** rate limiting, the cache, live WebSocket updates across instances, the plain page and two compose instances are done (ADRs 017–020). R8 and R12 are resolved; R15 and R16 are still open. Interview questions for M0–M2 are in `docs/interview/`.
+**Milestone 3 is complete (2026-09-25).** Rate limiting, the version-guarded cache, live WebSocket updates across two instances, and the plain page (with a contract test) are done, in ADRs 017–020. The adversarial review's findings are fixed; deferred items are in R17, including a **must-fix for M5: the cache version ignores `end_at`**. Also open: R15, R16. Interview questions for M0–M3 are in `docs/interview/`. **Next: M3.5**, a throwaway minimal Terraform deploy of /healthz on AWS, then `terraform destroy`. That **costs money and needs AWS credentials**, so stop and ask the owner before creating anything (R10).
 
 Notes for whoever picks this up:
 - `make run` sources `.env` in the shell. The compose `api` service gets an explicit variable list, not the whole `.env`, always listens on `:8080` inside the container, and uses an in-network `DATABASE_URL` built from the `POSTGRES_*` variables.
