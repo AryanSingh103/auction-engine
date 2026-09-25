@@ -33,6 +33,11 @@ func NewService(pool *pgxpool.Pool, opts ...Option) *Service {
 	return s
 }
 
+// postCommitTimeout bounds the cache refresh and event publish that follow
+// a commit. Both are best effort; this only stops a stalled Redis from
+// holding the request open.
+const postCommitTimeout = 2 * time.Second
+
 // PlaceBidRequest is one bid attempt.
 type PlaceBidRequest struct {
 	AuctionID      int64
@@ -72,10 +77,17 @@ func (s *Service) PlaceBid(ctx context.Context, req PlaceBidRequest) (bid Bid, r
 		// A subscriber that reacts to the event by reading the auction then
 		// never gets older state than the event itself. Both are best
 		// effort; the bid is already durable.
-		s.refreshCache(ctx, req.AuctionID)
+		//
+		// They run detached from the request context: the bid is committed,
+		// so a client disconnecting (or the request deadline expiring) right
+		// now must not stop everyone else from being told. They get their
+		// own short deadline instead. Found by the M3 adversarial review.
+		post, cancel := context.WithTimeout(context.WithoutCancel(ctx), postCommitTimeout)
+		s.refreshCache(post, req.AuctionID)
 		if s.pub != nil {
-			_ = s.pub.PublishBid(ctx, bid)
+			_ = s.pub.PublishBid(post, bid)
 		}
+		cancel()
 	}
 	if isConstraintViolation(err, "bids_idempotency") {
 		// Same-key requests on the SAME auction are serialized by the row

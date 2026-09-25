@@ -627,3 +627,40 @@ func TestPublishesOnlyNewlyAcceptedBids(t *testing.T) {
 		}
 	})
 }
+
+// cancellingCache cancels the request context when the post-commit refresh
+// reaches it: the client disconnecting just after COMMIT.
+type cancellingCache struct{ cancel context.CancelFunc }
+
+func (c cancellingCache) Get(context.Context, int64) (auction.Auction, bool, error) {
+	return auction.Auction{}, false, nil
+}
+func (c cancellingCache) Put(context.Context, auction.Auction) error { c.cancel(); return nil }
+
+type ctxRecordingPublisher struct{ errs []error }
+
+func (p *ctxRecordingPublisher) PublishBid(ctx context.Context, _ auction.Bid) error {
+	p.errs = append(p.errs, ctx.Err())
+	return nil
+}
+
+// Once a bid is committed, a client disconnecting must not stop the event
+// from being published (and the cache refreshed) for everyone else.
+func TestPostCommitWorkSurvivesClientDisconnect(t *testing.T) {
+	pool := server.NewDB(t, 4)
+	auctionID := seed(t, pool, 1, "clock_timestamp() + interval '1 hour'")
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	pub := &ctxRecordingPublisher{}
+	svc := auction.NewService(pool, auction.WithCache(cancellingCache{cancel}), auction.WithPublisher(pub))
+
+	if _, _, err := svc.PlaceBid(ctx, auction.PlaceBidRequest{AuctionID: auctionID, UserID: 1, Amount: 1000, IdempotencyKey: "a"}); err != nil {
+		t.Fatal(err)
+	}
+	if ctx.Err() == nil {
+		t.Fatal("test setup: the request context was never cancelled")
+	}
+	if len(pub.errs) != 1 || pub.errs[0] != nil {
+		t.Errorf("publish saw context errors %v; want it to run with a live context after the client left", pub.errs)
+	}
+}
