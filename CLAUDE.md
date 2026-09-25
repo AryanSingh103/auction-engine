@@ -103,6 +103,7 @@ Run `make help` for the full list. The ones you'll use most:
 - `make migrate`, `make migrate-status`: goose migrations against `.env`'s `DATABASE_URL`.
 - `make test`, `make test-race`, `make vet`, `make fmt-check`, `make lint`: all must be clean before a milestone closes. The tests **need Docker running**, because integration tests start Postgres through testcontainers. The Makefile points testcontainers at the active docker context (colima), so a plain `go test` outside make needs `DOCKER_HOST` and `TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE` set the same way.
 - `make psql`: a psql shell inside the Postgres container. `make logs`: follow every compose service.
+- **Two API instances** in compose: `api` on :8080 and `api2` on :8081. The live page is at `http://localhost:8080/`.
 - **Observability:**
   - Grafana at `http://localhost:3000`. Dashboards are viewable without login; admin credentials are in `.env`.
   - Prometheus at `http://localhost:9090`.
@@ -126,6 +127,13 @@ CI (`.github/workflows/ci.yml`) runs lint, `make fmt-check vet test-race` and an
 - `internal/metrics/`: Prometheus registry, HTTP middleware (labels are route *patterns*), the pool collector, and the `auction.Observer` implementation (ADR 013).
 - `internal/loadgen/` + `cmd/loadgen/`: the self-verifying load generator (ADR 015).
 - `internal/postgres/`: pool construction; every connection gets `idle_in_transaction_session_timeout`.
+- **Redis is an accelerator only (ADR 017):**
+  - `internal/redisclient` (short timeouts, no retries)
+  - `internal/ratelimit` (Lua token bucket, fail-open, ADR 018)
+  - `internal/cache` (version-guarded auction cache, ADR 019)
+  - `internal/live` (the hub that drops slow clients, and the Redis pub/sub bus, ADR 020)
+  - `internal/testredis` (the test harness)
+- The WebSocket handler is `internal/httpapi/live.go`, and the plain page is `internal/httpapi/web/index.html`.
 - `deploy/`: Prometheus config, and Grafana provisioning plus the dashboard JSON (change dashboards here, not in the UI).
 - `docs/benchmarks.md` + `docs/benchmarks/<date>/`: recorded numbers, with their raw data and environment.
 - `internal/testdb/`: testcontainers harness. One container per test binary, and a fresh database cloned from a migrated template per test.
@@ -137,7 +145,7 @@ Database error codes: the guard trigger raises `AE001`–`AE006` and the deferre
 
 ## Current status
 
-**Milestone 2 is complete (2026-09-24).** Metrics, Grafana, the self-verifying load generator, the benchmark (`docs/benchmarks.md`, corrected after review) and ADRs 013–016 are done. Pessimistic locking stays the default. Open for later: R15 (the hybrid pre-lock rejection, unmeasured) and R16 (deferred review items, including making guard classification strategy-aware before M5). Interview questions for M0–M2 are in `docs/interview/`, for the owner to answer when they choose. **Next: plan milestone 3** (WebSocket fan-out, Redis caching, Redis pub/sub across API instances, rate limiting; see R8 and R12).
+**Milestone 3 is in close-out (2026-09-25):** rate limiting, the cache, live WebSocket updates across instances, the plain page and two compose instances are done (ADRs 017–020). R8 and R12 are resolved; R15 and R16 are still open. Interview questions for M0–M2 are in `docs/interview/`.
 
 Notes for whoever picks this up:
 - `make run` sources `.env` in the shell. The compose `api` service gets an explicit variable list, not the whole `.env`, always listens on `:8080` inside the container, and uses an in-network `DATABASE_URL` built from the `POSTGRES_*` variables.
@@ -145,6 +153,8 @@ Notes for whoever picks this up:
 - Colima only shares `$HOME` into its VM. Bind mounts from `/tmp` or `/private/tmp` show up empty inside containers.
 - In zsh, `$VAR` holding a command with spaces does not word-split. Use a shell function.
 - A plain `go test` needs `DOCKER_HOST=$(docker context inspect -f '{{.Endpoints.docker.Host}}') TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=/var/run/docker.sock` (make sets both).
+- The Redis-backed features must **degrade, never fail**, when Redis is down: the cache falls back to Postgres, the limiter allows the request, and live updates are skipped. The bid path must never read Redis.
+- Prometheus does not reload `deploy/prometheus/prometheus.yml` on its own: `docker compose restart prometheus` after editing it.
 - `docker compose run` and `up` do not rebuild images; `scripts/bench.sh` builds first. Use `--build` elsewhere, or you may test stale code.
 
 ## Local environment

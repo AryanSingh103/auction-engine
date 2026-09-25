@@ -38,6 +38,7 @@ Bids, per-user rate limits (M3) and invoices all need a user, but the brief defi
 "No outbox event without its bid" needs a link from outbox to bid: a nullable `bid_id` foreign key with a unique constraint. The invariant checker should also query for bids that have no event.
 
 ## R8. Redis pub/sub is fire-and-forget (M3)
+**Resolved in M3 (ADR 020).** Clients get a snapshot on connect, apply a bid only if its `prev_bid_id` equals their head (otherwise they re-read), and a periodic `sync` of the head bounds staleness if the last message is lost. The bid chain provides the sequence numbers, so no separate counter was needed.
 Messages published while an instance or client is disconnected are lost. WebSocket clients need a state snapshot on connect, plus per-auction sequence numbers so they can detect gaps and resync.
 
 ## R9. Benchmark honesty (M2)
@@ -57,6 +58,7 @@ Any step that creates billable resources needs the owner's explicit go-ahead.
 Found in the M0 review. When `WriteTimeout` expires, net/http kills the connection silently. The handler's context is **not** cancelled, the handler runs to completion (holding a DB connection and row locks from M1 on), and the request log records the status the handler wrote (e.g. 200), not what the client saw (EOF). M1 needs a request-deadline middleware (`context.WithTimeout`, below `WriteTimeout`) that DB calls honor. `http.TimeoutHandler` is the alternative, but it buffers responses and breaks hijacking, so it is unsuitable once WebSockets arrive.
 
 ## R12. WebSocket traps in the M0 server setup (M3)
+**Resolved in M3.** The live route sits outside the request deadline (mutation-tested). The hub closes streams with 1001 from `RegisterOnShutdown`. The recoverer skips writing a status on upgraded connections. The WriteTimeout item below turned out to be wrong.
 Found in the M0 review:
 - ~~The global `WriteTimeout` kills long-lived streams.~~ **Wrong, corrected in M3:** a WebSocket upgrade hijacks the connection, and `net/http` clears the connection's deadlines on hijack (`server.go`, `conn.hijackLocked`). A mutation test confirmed it. The real trap was the *request deadline middleware*, which does cancel the stream (also mutation-tested), so the live route sits outside it. `WriteTimeout` would matter for non-hijacked streams (SSE, HTTP/2).
 - `Shutdown` does not track hijacked connections. Use `RegisterOnShutdown` to send close frames.
