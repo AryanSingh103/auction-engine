@@ -30,6 +30,10 @@ func validEnv() map[string]string {
 		"REDIS_URL":             "redis://cache:6379/0",
 		"REDIS_TIMEOUT":         "200ms",
 		"AUCTION_CACHE_TTL":     "10s",
+		"WS_SEND_BUFFER":        "64",
+		"WS_PING_INTERVAL":      "20s",
+		"WS_WRITE_TIMEOUT":      "5s",
+		"WS_SYNC_INTERVAL":      "5s",
 
 		"RATE_LIMIT_BIDS_PER_SECOND": "10",
 		"RATE_LIMIT_BID_BURST":       "20",
@@ -55,6 +59,10 @@ func validConfig() Config {
 		RedisURL:               "redis://cache:6379/0",
 		RedisTimeout:           200 * time.Millisecond,
 		AuctionCacheTTL:        10 * time.Second,
+		WSSendBuffer:           64,
+		WSPingInterval:         20 * time.Second,
+		WSWriteTimeout:         5 * time.Second,
+		WSSyncInterval:         5 * time.Second,
 		RateLimitBidsPerSecond: 10,
 		RateLimitBidBurst:      20,
 	}

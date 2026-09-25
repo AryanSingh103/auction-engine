@@ -53,6 +53,11 @@ type Config struct {
 	// AuctionCacheTTL bounds how long a cached auction state can be served
 	// if a post-commit refresh was lost (docs/decisions/019).
 	AuctionCacheTTL time.Duration
+	// Live (WebSocket) settings; docs/decisions/020.
+	WSSendBuffer   int32         // messages buffered per connection before it is dropped as slow
+	WSPingInterval time.Duration // keepalive ping; must be well under proxy idle timeouts
+	WSWriteTimeout time.Duration // bound on each message write and ping
+	WSSyncInterval time.Duration // how often each room gets the current head
 	// RateLimitBidsPerSecond and RateLimitBidBurst shape the per-user token
 	// bucket on bid placement (docs/decisions/018).
 	RateLimitBidsPerSecond float64
@@ -115,6 +120,9 @@ func Load(lookup LookupFunc) (Config, error) {
 		{"DB_IDLE_IN_TX_TIMEOUT", &cfg.DBIdleInTxTimeout},
 		{"REDIS_TIMEOUT", &cfg.RedisTimeout},
 		{"AUCTION_CACHE_TTL", &cfg.AuctionCacheTTL},
+		{"WS_PING_INTERVAL", &cfg.WSPingInterval},
+		{"WS_WRITE_TIMEOUT", &cfg.WSWriteTimeout},
+		{"WS_SYNC_INTERVAL", &cfg.WSSyncInterval},
 	}
 	durationsOK := true
 	for _, d := range durations {
@@ -150,6 +158,12 @@ func Load(lookup LookupFunc) (Config, error) {
 		errs = append(errs, err)
 	} else {
 		cfg.RedisURL = v
+	}
+
+	if n, err := positiveInt32(lookup, "WS_SEND_BUFFER"); err != nil {
+		errs = append(errs, err)
+	} else {
+		cfg.WSSendBuffer = n
 	}
 
 	if v, err := positiveFloat(lookup, "RATE_LIMIT_BIDS_PER_SECOND"); err != nil {
