@@ -1,0 +1,84 @@
+<!doctype html>
+<!-- Deliberately plain (docs/PROJECT_BRIEF.md): one file, vanilla JS. It
+     demonstrates the live-update client contract of docs/decisions/020. -->
+<html>
+<head><meta charset="utf-8"><title>auction-engine</title></head>
+<body>
+<h1>auction-engine</h1>
+<p>
+  Auction id <input id="auction" size="4" value="1">
+  <button onclick="connect()">watch</button>
+  <span id="conn">not connected</span>
+</p>
+<p>Current price: <b id="price">-</b> cents, leader: <b id="leader">-</b>, minimum next bid: <b id="min">-</b></p>
+<p>
+  Bid as user id <input id="user" size="4" value="1">
+  amount (cents) <input id="amount" size="8">
+  <button onclick="bid()">bid</button>
+  <span id="result"></span>
+</p>
+<pre id="log"></pre>
+<script>
+let ws = null, head = null, auction = null, retry = 0;
+
+function log(line) {
+  const el = document.getElementById("log");
+  el.textContent = new Date().toISOString().slice(11, 23) + " " + line + "\n" + el.textContent.slice(0, 5000);
+}
+
+function show(a) {
+  auction = a;
+  head = a.current_bid_id;
+  document.getElementById("price").textContent = a.current_price ?? "none (starting " + a.starting_price + ")";
+  document.getElementById("leader").textContent = a.current_leader_id ?? "-";
+  document.getElementById("min").textContent = a.minimum_bid;
+}
+
+// Re-read the whole state: used when a message was missed.
+async function resync(reason) {
+  log("resync: " + reason);
+  const r = await fetch("/auctions/" + auction.id);
+  if (r.ok) show(await r.json());
+}
+
+function connect() {
+  if (ws) ws.close();
+  const id = document.getElementById("auction").value;
+  ws = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/auctions/" + id + "/live");
+  ws.onopen = () => { retry = 0; document.getElementById("conn").textContent = "connected"; };
+  ws.onmessage = (e) => {
+    const m = JSON.parse(e.data);
+    if (m.type === "snapshot") { show(m.auction); log("snapshot: head " + head); return; }
+    if (m.type === "bid") {
+      const b = m.bid;
+      if (head !== null && b.id <= head) return;            // already have it
+      if (b.prev_bid_id !== head) { resync("gap before bid " + b.id); return; }
+      head = b.id;
+      show({...auction, current_bid_id: b.id, current_price: b.amount, current_leader_id: b.user_id,
+            minimum_bid: b.amount + auction.min_increment});
+      log("bid " + b.id + ": " + b.amount + " by user " + b.user_id);
+      return;
+    }
+    if (m.type === "sync" && m.head_bid_id !== head) resync("sync says head " + m.head_bid_id);
+  };
+  ws.onclose = (e) => {
+    document.getElementById("conn").textContent = "disconnected (" + e.code + ")";
+    // 1013: dropped for being slow; 1001: server going away. Reconnect with
+    // capped exponential backoff; the new snapshot resyncs everything.
+    const delay = Math.min(10000, 250 * 2 ** retry++);
+    setTimeout(() => { if (ws && ws.readyState === WebSocket.CLOSED) connect(); }, delay);
+  };
+}
+
+async function bid() {
+  const r = await fetch("/auctions/" + document.getElementById("auction").value + "/bids", {
+    method: "POST",
+    headers: {"X-User-ID": document.getElementById("user").value, "Idempotency-Key": crypto.randomUUID()},
+    body: JSON.stringify({amount: Number(document.getElementById("amount").value)}),
+  });
+  const body = await r.json();
+  document.getElementById("result").textContent = r.status + " " + (body.error ? body.error.code : "accepted");
+}
+</script>
+</body>
+</html>

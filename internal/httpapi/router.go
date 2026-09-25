@@ -61,6 +61,7 @@ func NewRouter(o Options) http.Handler {
 	r.Group(func(r chi.Router) {
 		r.Use(requestTimeout(o.RequestTimeout))
 
+		r.Get("/", handleIndex)
 		r.Get("/healthz", handleHealthz)
 		r.Get("/readyz", handleReadyz(o.Ready, o.Logger))
 		r.Get("/auctions/{auctionID}", handleGetAuction(o.Auctions, o.Logger))
