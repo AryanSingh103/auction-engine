@@ -13,6 +13,7 @@ import (
 	"syscall"
 
 	"github.com/AryanSingh103/auction-engine/internal/auction"
+	"github.com/AryanSingh103/auction-engine/internal/cache"
 	"github.com/AryanSingh103/auction-engine/internal/config"
 	"github.com/AryanSingh103/auction-engine/internal/httpapi"
 	"github.com/AryanSingh103/auction-engine/internal/metrics"
@@ -83,7 +84,8 @@ func run() error {
 			Logger: logger,
 			Auctions: auction.NewService(pool,
 				auction.WithObserver(m),
-				auction.WithLocking(auction.Locking(cfg.BidLocking))),
+				auction.WithLocking(auction.Locking(cfg.BidLocking)),
+				auction.WithCache(cache.New(rdb, cfg.AuctionCacheTTL, m.CacheOperation))),
 			Ready:          pool.Ping,
 			RequestTimeout: cfg.RequestTimeout,
 			Metrics:        m.HTTPMiddleware,

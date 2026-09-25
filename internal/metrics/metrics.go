@@ -32,6 +32,7 @@ type Metrics struct {
 	bids bidMetrics
 
 	rateLimit *prometheus.CounterVec
+	cache     *prometheus.CounterVec
 }
 
 // New creates the metrics and registers them, plus the Go runtime and
@@ -63,7 +64,14 @@ func New() *Metrics {
 	for _, r := range []string{"allowed", "limited", "error"} {
 		m.rateLimit.WithLabelValues(r)
 	}
-	m.registry.MustRegister(m.rateLimit)
+	m.cache = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "auction_cache_operations_total",
+		Help: "Auction cache operations: get (hit, miss, error) and put (stored, stale = a newer version was already cached, error).",
+	}, []string{"op", "result"})
+	for _, or := range [][2]string{{"get", "hit"}, {"get", "miss"}, {"get", "error"}, {"put", "stored"}, {"put", "stale"}, {"put", "error"}} {
+		m.cache.WithLabelValues(or[0], or[1])
+	}
+	m.registry.MustRegister(m.rateLimit, m.cache)
 	return m
 }
 
@@ -122,3 +130,6 @@ func methodLabel(m string) string {
 
 // RateLimitDecision counts one rate-limit decision.
 func (m *Metrics) RateLimitDecision(result string) { m.rateLimit.WithLabelValues(result).Inc() }
+
+// CacheOperation counts one auction cache operation.
+func (m *Metrics) CacheOperation(op, result string) { m.cache.WithLabelValues(op, result).Inc() }

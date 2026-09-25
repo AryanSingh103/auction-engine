@@ -14,11 +14,16 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/AryanSingh103/auction-engine/internal/auction"
+	"github.com/AryanSingh103/auction-engine/internal/cache"
 	"github.com/AryanSingh103/auction-engine/internal/invariants"
 	"github.com/AryanSingh103/auction-engine/internal/testdb"
+	"github.com/AryanSingh103/auction-engine/internal/testredis"
 )
 
-var server *testdb.Server
+var (
+	server      *testdb.Server
+	redisServer *testredis.Server
+)
 
 func TestMain(m *testing.M) {
 	ctx := context.Background()
@@ -28,10 +33,17 @@ func TestMain(m *testing.M) {
 		fmt.Fprintf(os.Stderr, "auction tests: %v\n", err)
 		os.Exit(1)
 	}
+	redisServer, err = testredis.Start(ctx)
+	if err != nil {
+		_ = server.Terminate(ctx)
+		fmt.Fprintf(os.Stderr, "auction tests: %v\n", err)
+		os.Exit(1)
+	}
 	code := m.Run()
 	if err := server.Terminate(ctx); err != nil {
 		fmt.Fprintf(os.Stderr, "auction tests: terminate: %v\n", err)
 	}
+	_ = redisServer.Terminate(ctx)
 	os.Exit(code)
 }
 
@@ -539,5 +551,37 @@ func TestServiceReportsToObserver(t *testing.T) {
 	// locking SELECT, which finds no row).
 	if obs.lockWaits != len(calls)-1 {
 		t.Errorf("%d lock waits reported, want %d", obs.lockWaits, len(calls)-1)
+	}
+}
+
+// GetAuction is served from the cache, and an accepted bid refreshes the
+// cache right away, so readers never wait for the TTL to see a new head.
+func TestCacheServesReadsAndIsRefreshedByBids(t *testing.T) {
+	pool := server.NewDB(t, 4)
+	auctionID := seed(t, pool, 2, "clock_timestamp() + interval '1 hour'")
+	var ops []string
+	c := cache.New(redisServer.NewClient(t), time.Minute, func(op, r string) { ops = append(ops, op+":"+r) })
+	svc := auction.NewService(pool, auction.WithCache(c))
+	ctx := t.Context()
+
+	if _, err := svc.GetAuction(ctx, auctionID); err != nil { // miss, then stored
+		t.Fatal(err)
+	}
+	if _, err := svc.GetAuction(ctx, auctionID); err != nil { // hit
+		t.Fatal(err)
+	}
+	if _, _, err := svc.PlaceBid(ctx, auction.PlaceBidRequest{AuctionID: auctionID, UserID: 1, Amount: 1500, IdempotencyKey: "a"}); err != nil {
+		t.Fatal(err)
+	}
+	a, err := svc.GetAuction(ctx, auctionID) // hit, already showing the bid
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.Head == nil || a.Head.Price != 1500 {
+		t.Fatalf("cached auction after bid: head %+v, want price 1500", a.Head)
+	}
+	want := "[get:miss put:stored get:hit put:stored get:hit]"
+	if fmt.Sprint(ops) != want {
+		t.Errorf("cache operations %v, want %s", ops, want)
 	}
 }

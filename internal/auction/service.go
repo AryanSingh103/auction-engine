@@ -20,6 +20,7 @@ type Service struct {
 	pool    *pgxpool.Pool
 	obs     Observer
 	locking Locking
+	cache   Cache // optional
 }
 
 // NewService returns a Service using pool.
@@ -64,6 +65,9 @@ func (s *Service) PlaceBid(ctx context.Context, req PlaceBidRequest) (bid Bid, r
 		bid, replayed, err = s.placeBidOptimistic(ctx, req)
 	} else {
 		bid, replayed, err = s.placeBidTx(ctx, req)
+	}
+	if err == nil && !replayed {
+		s.refreshCache(ctx, req.AuctionID)
 	}
 	if isConstraintViolation(err, "bids_idempotency") {
 		// Same-key requests on the SAME auction are serialized by the row
@@ -207,8 +211,40 @@ func (s *Service) replay(ctx context.Context, req PlaceBidRequest) (Bid, bool, e
 	return prior, true, nil
 }
 
-// GetAuction reads an auction without locking it.
+// GetAuction returns an auction's current state for display, from the cache
+// when possible. Cache errors are not errors here: it falls back to
+// Postgres (docs/decisions/017).
 func (s *Service) GetAuction(ctx context.Context, id int64) (Auction, error) {
+	if s.cache != nil {
+		if a, ok, err := s.cache.Get(ctx, id); err == nil && ok {
+			return a, nil
+		}
+	}
+	a, err := s.readAuction(ctx, id)
+	if err != nil {
+		return Auction{}, err
+	}
+	if s.cache != nil {
+		_ = s.cache.Put(ctx, a) // a failed or stale put only costs a later miss
+	}
+	return a, nil
+}
+
+// refreshCache writes the auction's post-commit state to the cache so
+// readers see the new head immediately rather than after the TTL. It reads
+// Postgres rather than reusing the transaction's view, so it can never
+// cache a state that was not committed; if a later bid already refreshed
+// the cache, the version guard keeps the newer state.
+func (s *Service) refreshCache(ctx context.Context, id int64) {
+	if s.cache == nil {
+		return
+	}
+	if a, err := s.readAuction(ctx, id); err == nil {
+		_ = s.cache.Put(ctx, a)
+	}
+}
+
+func (s *Service) readAuction(ctx context.Context, id int64) (Auction, error) {
 	return scanAuction(s.pool.QueryRow(ctx, auctionColumns+` WHERE id = $1`, id))
 }
 

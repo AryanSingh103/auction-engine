@@ -105,6 +105,19 @@ func (nopObserver) LockWait(time.Duration)       {}
 func (nopObserver) BidTransaction(time.Duration) {}
 func (nopObserver) OptimisticConflict()          {}
 
+// Cache is a read cache of auction state (internal/cache implements it).
+// It is used only by GetAuction; the bid path never reads it.
+type Cache interface {
+	Get(ctx context.Context, id int64) (Auction, bool, error)
+	Put(ctx context.Context, a Auction) error
+}
+
+// WithCache serves GetAuction from c and refreshes c after every accepted
+// bid.
+func WithCache(c Cache) Option {
+	return func(s *Service) { s.cache = c }
+}
+
 // Option configures a Service.
 type Option func(*Service)
 
