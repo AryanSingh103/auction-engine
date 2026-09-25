@@ -212,11 +212,52 @@ func TestLiveSyncBroadcastsCurrentHead(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
-	go RunLiveSync(ctx, svc, hub, 50*time.Millisecond, discardLogger)
+	RunLiveSync(ctx, svc, hub, 50*time.Millisecond, discardLogger)
 
 	var sync syncMessage
 	readType(t, conn, live.TypeSync, &sync)
 	if sync.HeadBidID == nil || *sync.HeadBidID != bid.ID {
 		t.Errorf("sync head = %v, want %d", sync.HeadBidID, bid.ID)
+	}
+}
+
+// staleCache always serves the state it was created with.
+type staleCache struct{ a auction.Auction }
+
+func (c staleCache) Get(context.Context, int64) (auction.Auction, bool, error) { return c.a, true, nil }
+func (c staleCache) Put(context.Context, auction.Auction) error                { return nil }
+
+// A cache left stale (a lost post-commit refresh) must not make the sync
+// repeat the stale head: sync reads Postgres.
+func TestLiveSyncIgnoresStaleCache(t *testing.T) {
+	pool := server.NewDB(t, 4)
+	seedAuction(t, pool)
+	before, err := auction.NewService(pool).GetAuction(t.Context(), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := auction.NewService(pool, auction.WithCache(staleCache{before}))
+	bid, _, err := svc.PlaceBid(t.Context(), auction.PlaceBidRequest{AuctionID: 1, UserID: 1, Amount: 1000, IdempotencyKey: "k"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	hub := live.NewHub(4, nil)
+	sub, _ := hub.Join(1)
+	ctx, cancel := context.WithCancel(t.Context())
+	done := RunLiveSync(ctx, svc, hub, 20*time.Millisecond, discardLogger)
+	var m syncMessage
+	select {
+	case raw := <-sub.Send:
+		if err := json.Unmarshal(raw, &m); err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("no sync message")
+	}
+	cancel()
+	<-done
+	if m.HeadBidID == nil || *m.HeadBidID != bid.ID {
+		t.Errorf("sync head = %v, want %d (Postgres), not the stale cached head", m.HeadBidID, bid.ID)
 	}
 }

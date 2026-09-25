@@ -3,7 +3,6 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"log/slog"
 	"net/http"
 	"time"
@@ -144,30 +143,42 @@ func write(ctx context.Context, conn *websocket.Conn, msg []byte, timeout time.D
 // RunLiveSync broadcasts every room's current head every interval until ctx
 // is cancelled. Pub/sub can lose a message; without this, a client that
 // missed the LAST bid of a quiet auction would show a stale price forever.
-// With it, staleness is bounded by interval. Reads go through the cache.
-func RunLiveSync(ctx context.Context, svc *auction.Service, hub *live.Hub, interval time.Duration, logger *slog.Logger) {
-	t := time.NewTicker(interval)
-	defer t.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-t.C:
-		}
-		for _, id := range hub.Rooms() {
-			a, err := svc.GetAuction(ctx, id)
-			if err != nil {
-				if !errors.Is(err, context.Canceled) {
-					logger.WarnContext(ctx, "live sync: read auction", slog.Int64("auction_id", id), slog.Any("error", err))
+//
+// It reads Postgres directly, not through the cache: a cache left stale by a
+// failed refresh would otherwise make the sync repeat the stale head, and
+// the staleness bound would become TTL + interval instead of interval.
+// Found by the M3 adversarial review. Each read has its own deadline so one
+// slow room cannot stall the others. done is closed when it returns.
+func RunLiveSync(ctx context.Context, svc *auction.Service, hub *live.Hub, interval time.Duration, logger *slog.Logger) (done <-chan struct{}) {
+	d := make(chan struct{})
+	go func() {
+		defer close(d)
+		t := time.NewTicker(interval)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+			}
+			for _, id := range hub.Rooms() {
+				rctx, cancel := context.WithTimeout(ctx, interval)
+				a, err := svc.ReadAuction(rctx, id)
+				cancel()
+				if err != nil {
+					if ctx.Err() == nil {
+						logger.WarnContext(ctx, "live sync: read auction", slog.Int64("auction_id", id), slog.Any("error", err))
+					}
+					continue
 				}
-				continue
+				m := syncMessage{Type: live.TypeSync, AuctionID: id}
+				if a.Head != nil {
+					m.HeadBidID, m.CurrentPrice = &a.Head.BidID, &a.Head.Price
+				}
+				msg, _ := json.Marshal(m)
+				hub.Broadcast(id, msg)
 			}
-			m := syncMessage{Type: live.TypeSync, AuctionID: id}
-			if a.Head != nil {
-				m.HeadBidID, m.CurrentPrice = &a.Head.BidID, &a.Head.Price
-			}
-			msg, _ := json.Marshal(m)
-			hub.Broadcast(id, msg)
 		}
-	}
+	}()
+	return d
 }

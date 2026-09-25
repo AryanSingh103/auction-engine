@@ -101,7 +101,7 @@ func run() error {
 		auction.WithLocking(auction.Locking(cfg.BidLocking)),
 		auction.WithCache(cache.New(rdb, cfg.AuctionCacheTTL, m.CacheOperation)),
 		auction.WithPublisher(bus))
-	go httpapi.RunLiveSync(liveCtx, svc, hub, cfg.WSSyncInterval, logger)
+	syncDone := httpapi.RunLiveSync(liveCtx, svc, hub, cfg.WSSyncInterval, logger)
 
 	srv := &http.Server{
 		Handler: httpapi.NewRouter(httpapi.Options{
@@ -242,6 +242,7 @@ func run() error {
 	}
 	cancelWait()
 	stopLive()
+	<-syncDone
 	if busDone != nil {
 		<-busDone
 	}

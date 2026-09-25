@@ -264,6 +264,11 @@ func (s *Service) refreshCache(ctx context.Context, id int64) {
 	}
 }
 
+// ReadAuction reads an auction from Postgres, bypassing the cache.
+func (s *Service) ReadAuction(ctx context.Context, id int64) (Auction, error) {
+	return s.readAuction(ctx, id)
+}
+
 func (s *Service) readAuction(ctx context.Context, id int64) (Auction, error) {
 	return scanAuction(s.pool.QueryRow(ctx, auctionColumns+` WHERE id = $1`, id))
 }
