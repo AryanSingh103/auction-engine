@@ -11,11 +11,13 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/AryanSingh103/auction-engine/internal/auction"
 	"github.com/AryanSingh103/auction-engine/internal/cache"
 	"github.com/AryanSingh103/auction-engine/internal/config"
 	"github.com/AryanSingh103/auction-engine/internal/httpapi"
+	"github.com/AryanSingh103/auction-engine/internal/live"
 	"github.com/AryanSingh103/auction-engine/internal/metrics"
 	"github.com/AryanSingh103/auction-engine/internal/postgres"
 	"github.com/AryanSingh103/auction-engine/internal/ratelimit"
@@ -79,19 +81,42 @@ func run() error {
 	m := metrics.New()
 	m.RegisterPool(pool)
 
+	// Live updates: this instance's hub of WebSocket rooms, fed by Redis
+	// pub/sub so bids accepted on any instance reach every client.
+	hub := live.NewHub(int(cfg.WSSendBuffer), m.LiveDropped)
+	bus := live.NewBus(rdb, m.LiveBusMessage)
+	liveCtx, stopLive := context.WithCancel(context.Background())
+	defer stopLive()
+	busDone, err := bus.Forward(liveCtx, hub)
+	if err != nil {
+		// Redis is an accelerator: without it the API still serves bids
+		// and reads; only live updates are missing (ADR 017). go-redis
+		// cannot resubscribe a subscription that never started, so this
+		// is logged loudly rather than retried.
+		logger.Error("live updates disabled: could not subscribe to Redis", slog.Any("error", err))
+	}
+
+	svc := auction.NewService(pool,
+		auction.WithObserver(m),
+		auction.WithLocking(auction.Locking(cfg.BidLocking)),
+		auction.WithCache(cache.New(rdb, cfg.AuctionCacheTTL, m.CacheOperation)),
+		auction.WithPublisher(bus))
+	go httpapi.RunLiveSync(liveCtx, svc, hub, cfg.WSSyncInterval, logger)
+
 	srv := &http.Server{
 		Handler: httpapi.NewRouter(httpapi.Options{
-			Logger: logger,
-			Auctions: auction.NewService(pool,
-				auction.WithObserver(m),
-				auction.WithLocking(auction.Locking(cfg.BidLocking)),
-				auction.WithCache(cache.New(rdb, cfg.AuctionCacheTTL, m.CacheOperation))),
+			Logger:         logger,
+			Auctions:       svc,
 			Ready:          pool.Ping,
 			RequestTimeout: cfg.RequestTimeout,
 			Metrics:        m.HTTPMiddleware,
 			BidLimiter: ratelimit.New(rdb, "ratelimit:",
 				cfg.RateLimitBidsPerSecond, int(cfg.RateLimitBidBurst)),
 			RecordRateLimit: m.RateLimitDecision,
+			Live: &httpapi.LiveOptions{
+				Hub: hub, PingInterval: cfg.WSPingInterval, WriteTimeout: cfg.WSWriteTimeout,
+				OnConnections: m.LiveConnections,
+			},
 		}),
 		BaseContext:       func(net.Listener) context.Context { return requestCtx },
 		ReadHeaderTimeout: cfg.HTTPReadHeaderTimeout,
@@ -103,6 +128,10 @@ func run() error {
 		// the same JSON stream.
 		ErrorLog: slog.NewLogLogger(logger.Handler(), slog.LevelError),
 	}
+
+	// Shutdown does not track hijacked (WebSocket) connections: close them
+	// explicitly with 1001 Going Away so clients reconnect elsewhere.
+	srv.RegisterOnShutdown(hub.Close)
 
 	// The metrics server is separate so /metrics is never reachable on the
 	// public port (docs/decisions/013). It has the same timeouts.
@@ -203,6 +232,18 @@ func run() error {
 		if err := <-metricsErr; !errors.Is(err, http.ErrServerClosed) {
 			return fmt.Errorf("serve metrics: %w", err)
 		}
+	}
+
+	// Give WebSocket handlers a moment to write their close frames (they
+	// are not waited for by Shutdown), then stop the live pipeline.
+	waitCtx, cancelWait := context.WithTimeout(context.Background(), time.Second)
+	for hub.Count() > 0 && waitCtx.Err() == nil {
+		time.Sleep(10 * time.Millisecond)
+	}
+	cancelWait()
+	stopLive()
+	if busDone != nil {
+		<-busDone
 	}
 
 	// Every handler has returned, so no connection is in use; closing the
