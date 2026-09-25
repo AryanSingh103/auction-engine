@@ -118,6 +118,18 @@ func WithCache(c Cache) Option {
 	return func(s *Service) { s.cache = c }
 }
 
+// Publisher announces accepted bids to live subscribers (internal/live
+// implements it over Redis pub/sub). Delivery is best effort: subscribers
+// detect gaps through Bid.PrevBidID and resync (docs/decisions/020).
+type Publisher interface {
+	PublishBid(ctx context.Context, b Bid) error
+}
+
+// WithPublisher announces every newly accepted bid on p after it commits.
+func WithPublisher(p Publisher) Option {
+	return func(s *Service) { s.pub = p }
+}
+
 // Option configures a Service.
 type Option func(*Service)
 

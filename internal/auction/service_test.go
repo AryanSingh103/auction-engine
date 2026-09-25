@@ -585,3 +585,45 @@ func TestCacheServesReadsAndIsRefreshedByBids(t *testing.T) {
 		t.Errorf("cache operations %v, want %s", ops, want)
 	}
 }
+
+type recordingPublisher struct {
+	mu   sync.Mutex
+	bids []auction.Bid
+}
+
+func (p *recordingPublisher) PublishBid(_ context.Context, b auction.Bid) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.bids = append(p.bids, b)
+	return nil
+}
+
+// Only newly accepted bids are published: not replays, not rejections.
+func TestPublishesOnlyNewlyAcceptedBids(t *testing.T) {
+	forEachLocking(t, func(t *testing.T, locking auction.Locking) {
+		pool := server.NewDB(t, 4)
+		auctionID := seed(t, pool, 2, "clock_timestamp() + interval '1 hour'")
+		pub := &recordingPublisher{}
+		svc := auction.NewService(pool, auction.WithLocking(locking), auction.WithPublisher(pub))
+		ctx := t.Context()
+
+		first, _, err := svc.PlaceBid(ctx, auction.PlaceBidRequest{AuctionID: auctionID, UserID: 1, Amount: 1000, IdempotencyKey: "a"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, _, _ = svc.PlaceBid(ctx, auction.PlaceBidRequest{AuctionID: auctionID, UserID: 1, Amount: 1000, IdempotencyKey: "a"}) // replay
+		_, _, _ = svc.PlaceBid(ctx, auction.PlaceBidRequest{AuctionID: auctionID, UserID: 2, Amount: 1001, IdempotencyKey: "b"}) // too low
+		second, _, err := svc.PlaceBid(ctx, auction.PlaceBidRequest{AuctionID: auctionID, UserID: 2, Amount: 1100, IdempotencyKey: "c"})
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if len(pub.bids) != 2 || pub.bids[0].ID != first.ID || pub.bids[1].ID != second.ID {
+			t.Fatalf("published %+v, want exactly bids %d then %d", pub.bids, first.ID, second.ID)
+		}
+		// The chain link subscribers use to detect gaps.
+		if pub.bids[1].PrevBidID == nil || *pub.bids[1].PrevBidID != first.ID {
+			t.Errorf("second event prev_bid_id = %v, want %d", pub.bids[1].PrevBidID, first.ID)
+		}
+	})
+}

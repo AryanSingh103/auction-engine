@@ -20,7 +20,8 @@ type Service struct {
 	pool    *pgxpool.Pool
 	obs     Observer
 	locking Locking
-	cache   Cache // optional
+	cache   Cache     // optional
+	pub     Publisher // optional
 }
 
 // NewService returns a Service using pool.
@@ -67,7 +68,14 @@ func (s *Service) PlaceBid(ctx context.Context, req PlaceBidRequest) (bid Bid, r
 		bid, replayed, err = s.placeBidTx(ctx, req)
 	}
 	if err == nil && !replayed {
+		// After COMMIT, in this order: refresh the cache, then announce.
+		// A subscriber that reacts to the event by reading the auction then
+		// never gets older state than the event itself. Both are best
+		// effort; the bid is already durable.
 		s.refreshCache(ctx, req.AuctionID)
+		if s.pub != nil {
+			_ = s.pub.PublishBid(ctx, bid)
+		}
 	}
 	if isConstraintViolation(err, "bids_idempotency") {
 		// Same-key requests on the SAME auction are serialized by the row
