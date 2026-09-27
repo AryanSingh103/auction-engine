@@ -352,6 +352,14 @@ resource "aws_ecs_service" "api" {
   # behind the ALB, so a green apply means the deploy actually worked.
   wait_for_steady_state = true
 
-  # The listener must exist before ECS registers targets.
-  depends_on = [aws_lb_listener.http, aws_iam_role_policy_attachment.execution]
+  # The listener must exist before ECS registers targets. The ASG
+  # dependency orders destroy: the service (and its task's graceful stop)
+  # goes first, and only then is the instance terminated. Without it
+  # Terraform may terminate the instance while the service is still
+  # draining. On create it means capacity is requested first.
+  depends_on = [
+    aws_lb_listener.http,
+    aws_iam_role_policy_attachment.execution,
+    aws_autoscaling_group.ecs,
+  ]
 }
