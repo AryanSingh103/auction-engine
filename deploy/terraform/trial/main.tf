@@ -236,8 +236,13 @@ resource "aws_lb_target_group" "api" {
     unhealthy_threshold = 3
   }
 
-  # ECS deregisters a task from the ALB, waits this long, then sends
-  # SIGTERM. The default 300s would make every deploy and destroy slow.
+  # When ECS stops a task (deploy, scale-in, service delete), it
+  # deregisters it, waits this long, then sends SIGTERM. The default 300s
+  # would make every deploy and destroy slow. This does NOT happen when
+  # the ASG terminates the instance (replacement, refresh, health check):
+  # ECS is not told, so the task gets SIGTERM while the ALB still routes
+  # to it. Observed in the trial: SIGTERM 26s before deregistration. M6
+  # needs a capacity provider with managed draining (R18).
   deregistration_delay = 15
 }
 
@@ -283,8 +288,8 @@ resource "aws_ecs_task_definition" "api" {
       protocol      = "tcp"
     }]
 
-    # SIGTERM to SIGKILL. Must stay above SHUTDOWN_TIMEOUT (15s) so the
-    # graceful drain always finishes.
+    # SIGTERM to SIGKILL. Must stay above SHUTDOWN_TIMEOUT (15s), which
+    # bounds the whole graceful shutdown (ADR 003).
     stopTimeout = 20
 
     # Every variable is required (ADR 001). DATABASE_URL and REDIS_URL point
