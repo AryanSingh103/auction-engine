@@ -45,6 +45,14 @@ Messages published while an instance or client is disconnected are lost. WebSock
 Numbers are measured inside the colima VM (4 vCPU / 6 GiB), not on bare metal, and `docs/benchmarks.md` must say so. Optimistic locking on a single hot row is expected to lose to pessimistic locking because of retry storms. Report whatever is actually measured.
 
 ## R10. AWS cost (M3.5, M6)
+**Checked for M3.5 (2026-09-27):**
+- A $10/month budget (`monthly-guard`) exists.
+- The account is on the free plan, with $120 of credits until 2027-03-27.
+- The trial used no NAT gateway and cost about $0.07/hour (ADR 021).
+- It was destroyed the same day, and a direct check found nothing billable left.
+
+Re-check all of this before M6, where RDS and an always-on ALB will cost money even when idle.
+
 Before the first `terraform apply`:
 - set a billing budget alarm
 - avoid NAT gateways (about $30/month each)
