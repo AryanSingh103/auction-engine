@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/coder/websocket"
@@ -35,8 +36,30 @@ type LiveOptions struct {
 	// Active, if set, tracks running live handlers so shutdown can wait
 	// for their close frames: http.Server.Shutdown does not wait for
 	// hijacked connections.
-	Active *sync.WaitGroup
+	Active *ActiveHandlers
 }
+
+// ActiveHandlers tracks running live handlers. The count exists because a
+// WaitGroup alone cannot say how many are running: shutdown needs that
+// when its budget has run out, and a channel closed by a goroutine
+// blocked in Wait may simply not have been scheduled yet. (Found while
+// fixing the M3.5 shutdown budget.)
+type ActiveHandlers struct {
+	wg sync.WaitGroup
+	n  atomic.Int64
+}
+
+func (a *ActiveHandlers) add() { a.wg.Add(1); a.n.Add(1) }
+
+// done decrements the count before the WaitGroup, so once Wait returns,
+// Running is zero.
+func (a *ActiveHandlers) done() { a.n.Add(-1); a.wg.Done() }
+
+// Wait blocks until every tracked handler has returned.
+func (a *ActiveHandlers) Wait() { a.wg.Wait() }
+
+// Running reports how many tracked handlers have not returned.
+func (a *ActiveHandlers) Running() int64 { return a.n.Load() }
 
 type snapshotMessage struct {
 	Type    string          `json:"type"`
@@ -75,8 +98,8 @@ func handleAuctionLive(svc *auction.Service, o LiveOptions, logger *slog.Logger)
 			return
 		}
 		if o.Active != nil {
-			o.Active.Add(1)
-			defer o.Active.Done()
+			o.Active.add()
+			defer o.Active.done()
 		}
 
 		// 404 before upgrading, as a normal HTTP response. This route is

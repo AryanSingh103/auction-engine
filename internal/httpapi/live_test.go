@@ -8,7 +8,6 @@ import (
 	"net/http/httptest"
 	"strconv"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -275,7 +274,7 @@ func TestLiveConnectionCap(t *testing.T) {
 	pool := server.NewDB(t, 4)
 	seedAuction(t, pool)
 	hub := live.NewHub(4, nil)
-	var active sync.WaitGroup
+	var active ActiveHandlers
 	srv := httptest.NewServer(NewRouter(Options{
 		Logger: discardLogger, Auctions: auction.NewService(pool), Ready: pool.Ping, RequestTimeout: time.Second,
 		Live: &LiveOptions{Hub: hub, PingInterval: time.Second, WriteTimeout: time.Second,
@@ -286,6 +285,9 @@ func TestLiveConnectionCap(t *testing.T) {
 	first := dialLive(t, srv, "1")
 	var snap snapshotMessage
 	readType(t, first, live.TypeSnapshot, &snap)
+	if n := active.Running(); n != 1 {
+		t.Fatalf("Running with one live connection = %d, want 1", n)
+	}
 
 	url := "ws" + strings.TrimPrefix(srv.URL, "http") + "/auctions/1/live"
 	_, resp, err := websocket.Dial(t.Context(), url, nil)
@@ -304,6 +306,9 @@ func TestLiveConnectionCap(t *testing.T) {
 	case <-waited:
 	case <-time.After(3 * time.Second):
 		t.Fatal("handler did not finish after the client closed")
+	}
+	if n := active.Running(); n != 0 {
+		t.Fatalf("Running after Wait returned = %d, want 0", n)
 	}
 	again := dialLive(t, srv, "1")
 	readType(t, again, live.TypeSnapshot, &snap)

@@ -10,9 +10,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"sync"
 	"syscall"
-	"time"
 
 	"github.com/AryanSingh103/auction-engine/internal/auction"
 	"github.com/AryanSingh103/auction-engine/internal/cache"
@@ -98,7 +96,7 @@ func run() error {
 		auction.WithCache(cache.New(rdb, cfg.AuctionCacheTTL, m.CacheOperation)),
 		auction.WithPublisher(bus))
 	// Running WebSocket handlers, awaited at shutdown (see below).
-	var liveHandlers sync.WaitGroup
+	var liveHandlers httpapi.ActiveHandlers
 	syncDone := httpapi.RunLiveSync(liveCtx, svc, hub, cfg.WSSyncInterval, logger)
 
 	srv := &http.Server{
@@ -198,7 +196,12 @@ func run() error {
 	logger.Info("shutdown started", slog.String("timeout", cfg.ShutdownTimeout.String()))
 
 	// A fresh context: ctx is already cancelled, and deriving from it would
-	// give Shutdown zero time.
+	// give Shutdown zero time. SHUTDOWN_TIMEOUT bounds the whole sequence
+	// below (API drain, metrics, live handlers), not just the API drain:
+	// the platform's stop timeout (compose stop_grace_period, ECS
+	// stopTimeout) is set just above it, and three phases with separate
+	// budgets could add up past it and get the process SIGKILLed before
+	// the pool closes. (Found by the M3.5 adversarial review.)
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
 	defer cancel()
 
@@ -219,15 +222,14 @@ func run() error {
 		return fmt.Errorf("serve: %w", err)
 	}
 
-	// The API is drained; now stop the metrics server. It gets its own
-	// budget (a scrape is short) rather than whatever the API drain left of
-	// shutdownCtx, so a drain that used its whole budget cannot turn a
-	// clean shutdown into a failed one.
+	// The API is drained; now stop the metrics server with whatever is left
+	// of the budget. If the drain used it all, force-close instead: the
+	// worst case is one lost scrape, which must not turn a clean drain of
+	// the API into a failed shutdown.
 	if !metricsDone {
-		metricsCtx, cancelMetrics := context.WithTimeout(context.Background(), cfg.HTTPWriteTimeout)
-		defer cancelMetrics()
-		if err := metricsSrv.Shutdown(metricsCtx); err != nil {
-			return fmt.Errorf("metrics server shutdown: %w", err)
+		if err := metricsSrv.Shutdown(shutdownCtx); err != nil {
+			logger.Warn("metrics server shutdown ran out of budget; closing it", slog.Any("error", err))
+			_ = metricsSrv.Close()
 		}
 		if err := <-metricsErr; !errors.Is(err, http.ErrServerClosed) {
 			return fmt.Errorf("serve metrics: %w", err)
@@ -241,10 +243,17 @@ func run() error {
 	// the rooms immediately. Found by the M3 adversarial review.)
 	handlersDone := make(chan struct{})
 	go func() { liveHandlers.Wait(); close(handlersDone) }()
+	// Each handler's close-frame write is itself bounded by WS_WRITE_TIMEOUT;
+	// this wait is bounded by what is left of the shutdown budget.
 	select {
 	case <-handlersDone:
-	case <-time.After(cfg.WSWriteTimeout):
-		logger.Warn("live handlers still running after the close-frame wait")
+	case <-shutdownCtx.Done():
+		// Ask the count, not handlersDone: if the budget ran out before this
+		// point, the goroutine above may not have run yet even with no
+		// handlers left.
+		if n := liveHandlers.Running(); n > 0 {
+			logger.Warn("live handlers still running when the shutdown budget ran out", slog.Int64("running", n))
+		}
 	}
 	stopLive()
 	<-syncDone
