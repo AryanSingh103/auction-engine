@@ -160,9 +160,10 @@ func testConcurrentBidsNoLostUpdate(t *testing.T, locking auction.Locking) {
 	}
 	t.Logf("%s: %d bids in %s: %d accepted, %d contention, %d too low, %d optimistic conflicts",
 		locking, bidders, elapsed, len(accepted), contention, bidders-len(accepted)-contention, obs.conflicts)
-	if locking == auction.LockingOptimistic && obs.conflicts == 0 {
-		t.Fatal("optimistic run saw no conflicts: the retry path was never exercised")
-	}
+	// Conflicts here are left to chance: with random order only ~ln(1000)
+	// bids are ever accepted, and CI has seen runs with zero conflicts.
+	// TestOptimisticConflictIsRetried forces one deterministically, so the
+	// retry path's coverage does not depend on this run's scheduling.
 
 	// Contention must actually have happened, otherwise this test proves
 	// nothing about concurrency: with random order, far more than one bid
@@ -238,6 +239,88 @@ func walkChain(t *testing.T, pool *pgxpool.Pool, head int64) []int64 {
 		t.Fatalf("walk chain: %v", err)
 	}
 	return amounts
+}
+
+// TestOptimisticConflictIsRetried forces the conflict the optimistic
+// strategy exists to handle. The test holds the auction row lock, which
+// the guard trigger needs on INSERT, so two bids both read the same head
+// (plain reads are not blocked) and then queue behind the lock. When it is
+// released, whichever bid writes second finds the head moved and must be
+// retried. Both orders are valid; the outcome is the same either way.
+func TestOptimisticConflictIsRetried(t *testing.T) {
+	ctx := t.Context()
+	pool := server.NewDB(t, 5)
+	auctionID := seed(t, pool, 2, "clock_timestamp() + interval '1 hour'")
+	obs := &recordingObserver{}
+	svc := auction.NewService(pool, auction.WithLocking(auction.LockingOptimistic), auction.WithObserver(obs))
+
+	blocker, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin blocker: %v", err)
+	}
+	defer func() { _ = blocker.Rollback(ctx) }()
+	if _, err := blocker.Exec(ctx, `SELECT 1 FROM auctions WHERE id = $1 FOR UPDATE`, auctionID); err != nil {
+		t.Fatalf("lock auction: %v", err)
+	}
+
+	// User 2 bids well above user 1, so it is accepted in either order.
+	const low, high = startingPrice, startingPrice + 5*increment
+	amounts := [2]int64{low, high}
+	var errs [2]error
+	var wg sync.WaitGroup
+	for i := range 2 {
+		wg.Go(func() {
+			user := int64(i + 1)
+			_, _, errs[i] = svc.PlaceBid(ctx, auction.PlaceBidRequest{
+				AuctionID: auctionID, UserID: user, Amount: amounts[i],
+				IdempotencyKey: fmt.Sprintf("bid-%d", user),
+			})
+		})
+	}
+
+	// Release only once both bids have read the auction and are waiting
+	// on the lock; otherwise one could read after the other committed and
+	// there would be no conflict to test.
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		var waiting int
+		if err := pool.QueryRow(ctx, `
+			SELECT count(*) FROM pg_stat_activity
+			WHERE datname = current_database() AND wait_event_type = 'Lock'`).Scan(&waiting); err != nil {
+			t.Fatalf("count lock waiters: %v", err)
+		}
+		if waiting == 2 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("%d bid(s) waiting on the auction lock after 10s, want 2", waiting)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if err := blocker.Rollback(ctx); err != nil {
+		t.Fatalf("release lock: %v", err)
+	}
+	wg.Wait()
+
+	if obs.conflicts != 1 {
+		t.Errorf("optimistic conflicts = %d, want exactly 1", obs.conflicts)
+	}
+	if errs[1] != nil {
+		t.Errorf("high bid: %v, want accepted", errs[1])
+	}
+	// If the low bid lost the race, its retry sees the high bid and is too
+	// low; if it won, it was accepted first. Anything else is a bug.
+	if errs[0] != nil && !errors.Is(errs[0], auction.ErrBidTooLow) {
+		t.Errorf("low bid: %v, want accepted or ErrBidTooLow", errs[0])
+	}
+	a, err := svc.GetAuction(ctx, auctionID)
+	if err != nil {
+		t.Fatalf("GetAuction: %v", err)
+	}
+	if a.Head == nil || a.Head.UserID != 2 || a.Head.Price != high {
+		t.Errorf("head = %+v, want user 2 at %d", a.Head, high)
+	}
+	assertInvariants(t, pool)
 }
 
 // TestIdempotentReplayUnderConcurrency sends the same bid (same user, same
