@@ -136,6 +136,7 @@ CI (`.github/workflows/ci.yml`) runs lint, `make fmt-check vet test-race` and an
   - `internal/testredis` (the test harness)
 - The WebSocket handler is `internal/httpapi/live.go`, and the plain page is `internal/httpapi/web/index.html`.
 - `deploy/`: Prometheus config, and Grafana provisioning plus the dashboard JSON (change dashboards here, not in the UI).
+- `deploy/terraform/trial/`: the destroyed M3.5 stack, kept for reference. Its state is local and git-ignored. Variables have no defaults, so pass them with `-var`.
 - `docs/benchmarks.md` + `docs/benchmarks/<date>/`: recorded numbers, with their raw data and environment.
 - `internal/testdb/`: testcontainers harness. One container per test binary, and a fresh database cloned from a migrated template per test.
 - `docs/decisions/`: ADRs, numbered `NNN-short-title.md`. `docs/open-questions.md`: spec gaps and risks R1–R13. `docs/interview/`: per-milestone interview questions.
@@ -146,12 +147,17 @@ Database error codes: the guard trigger raises `AE001`–`AE006` and the deferre
 
 ## Current status
 
-**Milestone 3 is complete (2026-09-25).** Rate limiting, the version-guarded cache, live WebSocket updates across two instances, and the plain page (with a contract test) are done, in ADRs 017–020. The adversarial review's findings are fixed; deferred items are in R17, including a **must-fix for M5: the cache version ignores `end_at`**. Also open: R15, R16. Interview questions for M0–M3 are in `docs/interview/`. **Next: M3.5**, a throwaway minimal Terraform deploy of /healthz on AWS, then `terraform destroy`. That **costs money and needs AWS credentials**, so stop and ask the owner before creating anything (R10).
+**Milestone 3.5 is complete (2026-09-27).** A throwaway Terraform stack (`deploy/terraform/trial/`, ADR 021) served `/healthz` on ECS-on-EC2 behind an ALB in us-east-2 (account 332252068710). It was verified through the ALB and in CloudWatch, then destroyed, and a direct check found nothing billable left. The review's real findings are fixed. The biggest was that `SHUTDOWN_TIMEOUT` did not bound the whole shutdown (fixed in `cmd/api`, ADR 003). Items deferred to M6 are in R18, including draining through a capacity provider. Interview questions for M0–M3.5 are in `docs/interview/`.
+
+M3 left a **must-fix for M5: the cache version ignores `end_at`** (R17). R15 and R16 are also still open.
+
+**Next: M4** (Redpanda, transactional outbox, settlement consumer).
 
 Notes for whoever picks this up:
 - **`README.md` runs ahead of the code.** At the owner's request (2026-09-25) it describes the finished system: the outbox publisher, settlement, the closer, load shedding, the AWS deploy and fault injection are written up as done, although they are M4–M7 work. Use this status section and `docs/open-questions.md` for what is actually built; never treat the README as evidence that something exists. Its only numbers are real M2 benchmark results, and it must never gain invented ones.
 - `make run` sources `.env` in the shell. The compose `api` service gets an explicit variable list, not the whole `.env`, always listens on `:8080` inside the container, and uses an in-network `DATABASE_URL` built from the `POSTGRES_*` variables.
-- `SHUTDOWN_TIMEOUT` must stay below compose's `stop_grace_period` (20s), and in M6 below the ECS `stopTimeout`.
+- `SHUTDOWN_TIMEOUT` bounds the **whole** graceful shutdown (API drain, metrics server, live handlers). It must stay below compose's `stop_grace_period` (20s) and the ECS `stopTimeout` (20s in the trial).
+- **AWS:** the IAM user `aryan-cli` in us-east-2 has a $10 budget. Push to ECR with `aws ecr get-login-password | docker login --password-stdin`, so the token never appears in output. Creating anything billable still needs the owner's go-ahead (R10).
 - Colima only shares `$HOME` into its VM. Bind mounts from `/tmp` or `/private/tmp` show up empty inside containers.
 - In zsh, `$VAR` holding a command with spaces does not word-split. Use a shell function.
 - A plain `go test` needs `DOCKER_HOST=$(docker context inspect -f '{{.Endpoints.docker.Host}}') TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=/var/run/docker.sock` (make sets both).
