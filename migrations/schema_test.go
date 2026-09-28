@@ -608,3 +608,108 @@ func TestBidCreatedAtIsInsertTime(t *testing.T) {
 		t.Errorf("created_at is %s after transaction start, want >= 200ms (was now() used?)", gap)
 	}
 }
+
+// endedWithBids returns an auction with two accepted bids (users 0 then 1)
+// that has ended and been closed, and its bids' ids.
+func (f *fixture) endedWithBids(t *testing.T) (auction, first, second int64) {
+	t.Helper()
+	ctx := t.Context()
+	auction = f.newAuction(t, "clock_timestamp() - interval '1 minute'", "clock_timestamp() + interval '1 hour'")
+	first, err := f.placeBid(ctx, auction, f.users[0], 1000, nil, fmt.Sprintf("a%d-1", auction))
+	if err != nil {
+		t.Fatalf("first bid: %v", err)
+	}
+	second, err = f.placeBid(ctx, auction, f.users[1], 1100, &first, fmt.Sprintf("a%d-2", auction))
+	if err != nil {
+		t.Fatalf("second bid: %v", err)
+	}
+	if _, err := f.pool.Exec(ctx, `UPDATE auctions SET end_at = clock_timestamp() WHERE id = $1`, auction); err != nil {
+		t.Fatalf("end auction: %v", err)
+	}
+	if err := f.closeAuction(ctx, auction); err != nil {
+		t.Fatalf("close auction: %v", err)
+	}
+	return auction, first, second
+}
+
+func (f *fixture) insertInvoice(ctx context.Context, auction, bid, winner, amount int64) (int64, error) {
+	var id int64
+	err := f.pool.QueryRow(ctx, `
+		INSERT INTO invoices (auction_id, bid_id, winner_id, amount) VALUES ($1, $2, $3, $4) RETURNING id`,
+		auction, bid, winner, amount).Scan(&id)
+	return id, err
+}
+
+func TestInvoiceMustMatchClosedResult(t *testing.T) {
+	f := newFixture(t)
+	ctx := t.Context()
+
+	// The fixture's own auction is still open.
+	open, err := f.placeBid(ctx, f.auction, f.users[0], 1000, nil, "open")
+	if err != nil {
+		t.Fatalf("bid: %v", err)
+	}
+	_, err = f.insertInvoice(ctx, f.auction, open, f.users[0], 1000)
+	wantPgError(t, err, "AE015", "")
+
+	a, first, second := f.endedWithBids(t)
+	for _, tc := range []struct {
+		name                string
+		bid, winner, amount int64
+	}{
+		{"an earlier bid", first, f.users[0], 1000},
+		{"the wrong winner", second, f.users[0], 1100},
+		{"the wrong amount", second, f.users[1], 1},
+	} {
+		_, err := f.insertInvoice(ctx, a, tc.bid, tc.winner, tc.amount)
+		if err == nil {
+			t.Fatalf("invoice with %s was accepted", tc.name)
+		}
+		wantPgError(t, err, "AE015", "")
+	}
+
+	if _, err := f.insertInvoice(ctx, a, second, f.users[1], 1100); err != nil {
+		t.Fatalf("matching invoice: %v", err)
+	}
+	_, err = f.insertInvoice(ctx, a, second, f.users[1], 1100)
+	wantPgError(t, err, "23505", "invoices_auction_id_key")
+}
+
+func TestInvoiceLifecycle(t *testing.T) {
+	f := newFixture(t)
+	ctx := t.Context()
+	a, _, second := f.endedWithBids(t)
+	inv, err := f.insertInvoice(ctx, a, second, f.users[1], 1100)
+	if err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+	exec := func(sql string) error {
+		_, err := f.pool.Exec(ctx, sql, inv)
+		return err
+	}
+
+	wantPgError(t, exec(`UPDATE invoices SET amount = 1 WHERE id = $1`), "AE016", "")
+	wantPgError(t, exec(`UPDATE invoices SET winner_id = winner_id WHERE id = $1`), "AE016", "") // no status move
+	wantPgError(t, exec(`UPDATE invoices SET status = 'paid', settled_at = clock_timestamp() WHERE id = $1`),
+		"23514", "invoices_paid_has_payment")
+	wantPgError(t, exec(`UPDATE invoices SET status = 'paid', payment_id = 'ch_1' WHERE id = $1`),
+		"23514", "invoices_settled_when_not_pending")
+
+	// pending -> failed -> pending (a replay) -> paid.
+	for _, sql := range []string{
+		`UPDATE invoices SET status = 'failed', failure = 'provider down', settled_at = clock_timestamp() WHERE id = $1`,
+		`UPDATE invoices SET status = 'pending', failure = NULL, settled_at = NULL WHERE id = $1`,
+		`UPDATE invoices SET status = 'paid', payment_id = 'ch_1', settled_at = clock_timestamp() WHERE id = $1`,
+	} {
+		if err := exec(sql); err != nil {
+			t.Fatalf("%s: %v", sql, err)
+		}
+	}
+
+	// paid is final, and invoices are never deleted.
+	wantPgError(t, exec(`UPDATE invoices SET status = 'pending', payment_id = NULL, settled_at = NULL WHERE id = $1`), "AE016", "")
+	wantPgError(t, exec(`UPDATE invoices SET status = 'failed', payment_id = NULL, failure = 'x' WHERE id = $1`), "AE016", "")
+	wantPgError(t, exec(`DELETE FROM invoices WHERE id = $1`), "AE016", "")
+	_, err = f.pool.Exec(ctx, `TRUNCATE invoices`)
+	wantPgError(t, err, "AE016", "")
+}
