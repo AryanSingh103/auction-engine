@@ -341,6 +341,10 @@ func mapDBError(err error) error {
 		return fmt.Errorf("%w: %w", ErrRejectedByDatabaseGuard, ErrSelfOutbid)
 	case "AE006":
 		return fmt.Errorf("%w: %w", ErrRejectedByDatabaseGuard, ErrBidTooLow)
+	case "AE012":
+		// The trigger reads the clock after CloseAuction's check, so it can
+		// only disagree if that check is wrong.
+		return fmt.Errorf("%w: %w", ErrRejectedByDatabaseGuard, ErrAuctionNotEnded)
 	}
 	// AE004 (stale head), AE007 (bid without event) and anything else are
 	// bugs or infrastructure failures, not user errors: pass them through.
