@@ -7,6 +7,7 @@ Gaps in the brief's wording or mechanisms that would quietly break an invariant 
 In Postgres, `now()` returns the transaction's *start* time. Picture a bid transaction that starts before `end_at`, blocks on `SELECT ... FOR UPDATE` while the closer holds the row, and resumes after the close. It would still see `now() < end_at` and accept the bid, which violates invariant 4. Time checks made while holding the lock must use `clock_timestamp()`. The close-vs-bid race test must reproduce this exact interleaving.
 
 ## R2. Outbox publish ordering with multiple pollers (M4): critical
+**Resolved in M4 (ADR 022).** A single publisher per batch, via a transaction-level advisory lock. Tested with 4 concurrent relays and mutation-checked.
 Keying Kafka messages by `auction_id` only preserves order if events are *produced* in order. If several pollers use `FOR UPDATE SKIP LOCKED`, poller A can lock event 1 and poller B event 2 of the same auction, and B may publish first. Options:
 - a single publisher behind an advisory lock
 - pollers sharded by `hash(auction_id)`
