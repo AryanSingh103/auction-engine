@@ -1,7 +1,7 @@
 # 022. Outbox relay: one publisher per batch, via a transaction-level advisory lock
 
 ## Context
-Outbox events must reach Kafka at least once, with each auction's events in order (R2). The brief's `FOR UPDATE SKIP LOCKED` pollers break that order: two pollers can publish one auction's events out of order.
+Outbox events must reach Kafka at least once, each auction's in order (R2). The brief's `SKIP LOCKED` pollers can publish one auction's events out of order.
 
 ## Decision
 - Each batch is one transaction: `pg_try_advisory_xact_lock`, read the oldest unpublished rows in id order, produce and wait for acks, mark them published, commit. Any number of relays can run, but only one batch runs at a time.
@@ -12,7 +12,7 @@ Outbox events must reach Kafka at least once, with each auction's events in orde
 ## Alternatives
 - **A session lock:** a zombie holder keeps publishing after its connection dies.
 - **Sharded pollers:** more throughput, more moving parts.
-- **Kafka transactions:** don't cover the Postgres side.
+- **Kafka transactions:** they do not cover Postgres.
 
 ## Consequences
 A crash between the acknowledgement and the commit republishes the batch, so consumers must be idempotent.
