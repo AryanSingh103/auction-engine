@@ -79,10 +79,10 @@ func LoadRelay(lookup LookupFunc) (RelayConfig, error) {
 	// Kafka's wire type for the replication factor is int16.
 	if v, err := positiveInt32(lookup, "KAFKA_REPLICATION_FACTOR"); err != nil {
 		errs = append(errs, err)
-	} else if v > math.MaxInt16 {
-		errs = append(errs, fmt.Errorf("KAFKA_REPLICATION_FACTOR: %d is above %d", v, math.MaxInt16))
-	} else {
+	} else if v <= math.MaxInt16 && v >= 1 { // both bounds here, where the conversion is
 		cfg.KafkaReplicationFactor = int16(v)
+	} else {
+		errs = append(errs, fmt.Errorf("KAFKA_REPLICATION_FACTOR: %d is above %d", v, math.MaxInt16))
 	}
 	durationsOK := true
 	for _, d := range []struct {
