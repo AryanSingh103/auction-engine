@@ -33,6 +33,24 @@ func (o Outcome) String() string {
 	return [...]string{"paid", "declined", "already_settled", "no_winner"}[o]
 }
 
+// Observer receives settlement events, for metrics.
+type Observer interface {
+	// Settled reports one Settle call: an Outcome's name, or "gave_up",
+	// "rejected" or "error".
+	Settled(result string)
+	// PaymentAttempt reports one call to the provider: "ok", "declined",
+	// "rejected" or "unknown".
+	PaymentAttempt(result string)
+	// DeadLettered reports an event sent to the dead-letter topic.
+	DeadLettered()
+}
+
+type nopObserver struct{}
+
+func (nopObserver) Settled(string)        {}
+func (nopObserver) PaymentAttempt(string) {}
+func (nopObserver) DeadLettered()         {}
+
 // Settler settles closed auctions.
 type Settler struct {
 	pool        *pgxpool.Pool
@@ -41,12 +59,17 @@ type Settler struct {
 	maxAttempts int
 	backoffBase time.Duration
 	backoffCap  time.Duration
+	obs         Observer
 }
 
 // NewSettler returns a settler that makes up to maxAttempts payment
 // attempts per invoice, with full-jitter exponential backoff between them.
-func NewSettler(pool *pgxpool.Pool, pay Payer, b *breaker.Breaker, maxAttempts int, backoffBase, backoffCap time.Duration) *Settler {
-	return &Settler{pool: pool, pay: pay, breaker: b, maxAttempts: maxAttempts, backoffBase: backoffBase, backoffCap: backoffCap}
+// obs may be nil.
+func NewSettler(pool *pgxpool.Pool, pay Payer, b *breaker.Breaker, maxAttempts int, backoffBase, backoffCap time.Duration, obs Observer) *Settler {
+	if obs == nil {
+		obs = nopObserver{}
+	}
+	return &Settler{pool: pool, pay: pay, breaker: b, maxAttempts: maxAttempts, backoffBase: backoffBase, backoffCap: backoffCap, obs: obs}
 }
 
 type invoice struct {
@@ -62,7 +85,19 @@ type invoice struct {
 // Returned errors: ErrGaveUp and ErrRejected are final for this delivery
 // (dead-letter it); a context error means stop; anything else (a database
 // error) is worth retrying the whole call.
-func (s *Settler) Settle(ctx context.Context, auctionID int64) (Outcome, error) {
+func (s *Settler) Settle(ctx context.Context, auctionID int64) (out Outcome, err error) {
+	defer func() {
+		switch {
+		case err == nil:
+			s.obs.Settled(out.String())
+		case errors.Is(err, ErrGaveUp):
+			s.obs.Settled("gave_up")
+		case errors.Is(err, ErrRejected):
+			s.obs.Settled("rejected")
+		case ctx.Err() == nil:
+			s.obs.Settled("error")
+		}
+	}()
 	inv, found, err := s.ensureInvoice(ctx, auctionID)
 	if err != nil {
 		return 0, err
@@ -139,6 +174,16 @@ func (s *Settler) charge(ctx context.Context, key string, amount, customer int64
 		}
 		id, err := s.pay.Charge(ctx, key, amount, customer)
 		unknown := errors.Is(err, ErrUnknownOutcome)
+		switch {
+		case err == nil:
+			s.obs.PaymentAttempt("ok")
+		case errors.Is(err, ErrDeclined):
+			s.obs.PaymentAttempt("declined")
+		case unknown:
+			s.obs.PaymentAttempt("unknown")
+		default:
+			s.obs.PaymentAttempt("rejected")
+		}
 		// Our own shutdown is not the provider's fault.
 		if ctx.Err() == nil {
 			s.breaker.Record(!unknown)

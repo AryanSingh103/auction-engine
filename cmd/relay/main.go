@@ -84,7 +84,7 @@ func run() error {
 	logger.Info("relay started",
 		slog.String("topic", cfg.OutboxTopic),
 		slog.Int("batch_size", int(cfg.RelayBatchSize)))
-	relay := outbox.NewRelay(pool, outbox.NewKafkaPublisher(client, cfg.OutboxTopic), int(cfg.RelayBatchSize), cfg.RelayPublishTimeout)
+	relay := outbox.NewRelay(pool, outbox.NewKafkaPublisher(client, cfg.OutboxTopic), int(cfg.RelayBatchSize), cfg.RelayPublishTimeout, nil)
 	relay.Run(ctx, cfg.RelayPollInterval, logger)
 	logger.Info("relay stopped")
 	return nil

@@ -96,6 +96,7 @@ func (c *Consumer) handle(ctx context.Context, r *kgo.Record) error {
 // to the events topic; Settle makes that safe.
 func (c *Consumer) deadLetter(ctx context.Context, r *kgo.Record, cause error) error {
 	c.logger.Error("dead-lettering event", slog.String("key", string(r.Key)), slog.Any("error", cause))
+	c.settler.obs.DeadLettered()
 	dlq := &kgo.Record{
 		Topic: c.dlqTopic,
 		Key:   r.Key,

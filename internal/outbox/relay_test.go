@@ -117,7 +117,7 @@ func TestPublishBatchPublishesAndMarks(t *testing.T) {
 	bid(t, svc, auctions[0], 1, 102)
 
 	topic := kafka.NewTopic(t, 3)
-	relay := outbox.NewRelay(pool, newPublisher(t, topic), 2, 5*time.Second)
+	relay := outbox.NewRelay(pool, newPublisher(t, topic), 2, 5*time.Second, nil)
 
 	n, held, err := relay.PublishBatch(t.Context())
 	if err != nil || !held || n != 2 {
@@ -163,7 +163,7 @@ func TestPublishBatchStandsByWhileAnotherRelayIsActive(t *testing.T) {
 		t.Fatalf("take lock: %v", err)
 	}
 
-	relay := outbox.NewRelay(pool, newPublisher(t, kafka.NewTopic(t, 1)), 10, 5*time.Second)
+	relay := outbox.NewRelay(pool, newPublisher(t, kafka.NewTopic(t, 1)), 10, 5*time.Second, nil)
 	n, held, err := relay.PublishBatch(t.Context())
 	if err != nil || held || n != 0 {
 		t.Fatalf("batch while locked = %d, held %v, err %v; want 0, false, nil", n, held, err)
@@ -195,7 +195,7 @@ func TestFailedPublishIsRetriedFromTheSameRow(t *testing.T) {
 	bid(t, svc, auctions[0], 1, 100)
 	bid(t, svc, auctions[0], 2, 101)
 
-	if _, _, err := outbox.NewRelay(pool, failingPublisher{}, 10, 5*time.Second).PublishBatch(t.Context()); err == nil {
+	if _, _, err := outbox.NewRelay(pool, failingPublisher{}, 10, 5*time.Second, nil).PublishBatch(t.Context()); err == nil {
 		t.Fatal("PublishBatch with a failing publisher returned nil")
 	}
 	if got := unpublished(t, pool); got != 2 {
@@ -203,7 +203,7 @@ func TestFailedPublishIsRetriedFromTheSameRow(t *testing.T) {
 	}
 
 	topic := kafka.NewTopic(t, 1)
-	if n, _, err := outbox.NewRelay(pool, newPublisher(t, topic), 10, 5*time.Second).PublishBatch(t.Context()); err != nil || n != 2 {
+	if n, _, err := outbox.NewRelay(pool, newPublisher(t, topic), 10, 5*time.Second, nil).PublishBatch(t.Context()); err != nil || n != 2 {
 		t.Fatalf("retry = %d, err %v; want 2, nil", n, err)
 	}
 	if got := len(kafka.ReadAll(t, topic, 2, 10*time.Second)); got != 2 {
@@ -223,10 +223,10 @@ func TestPublishedButUncommittedIsPublishedAgain(t *testing.T) {
 
 	topic := kafka.NewTopic(t, 1)
 	pub := newPublisher(t, topic)
-	if _, _, err := outbox.NewRelay(pool, failingPublisher{inner: pub}, 10, 5*time.Second).PublishBatch(t.Context()); err == nil {
+	if _, _, err := outbox.NewRelay(pool, failingPublisher{inner: pub}, 10, 5*time.Second, nil).PublishBatch(t.Context()); err == nil {
 		t.Fatal("PublishBatch returned nil")
 	}
-	if n, _, err := outbox.NewRelay(pool, pub, 10, 5*time.Second).PublishBatch(t.Context()); err != nil || n != 2 {
+	if n, _, err := outbox.NewRelay(pool, pub, 10, 5*time.Second, nil).PublishBatch(t.Context()); err != nil || n != 2 {
 		t.Fatalf("second relay = %d, err %v; want 2, nil", n, err)
 	}
 
@@ -258,7 +258,7 @@ func TestConcurrentRelaysKeepPerAuctionOrder(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	var running sync.WaitGroup
 	for range relays {
-		relay := outbox.NewRelay(pool, newPublisher(t, topic), 7, 5*time.Second)
+		relay := outbox.NewRelay(pool, newPublisher(t, topic), 7, 5*time.Second, nil)
 		running.Go(func() { relay.Run(ctx, 5*time.Millisecond, discard) })
 	}
 

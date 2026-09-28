@@ -29,7 +29,7 @@ func startPipeline(t *testing.T, pool *pgxpool.Pool, settler *settlement.Settler
 	ctx, cancel := context.WithCancel(context.Background())
 	p.cancel = cancel
 
-	relay := outbox.NewRelay(pool, outbox.NewKafkaPublisher(kafka.NewClient(t, kgo.RecordDeliveryTimeout(5*time.Second)), p.topic), 50, 5*time.Second)
+	relay := outbox.NewRelay(pool, outbox.NewKafkaPublisher(kafka.NewClient(t, kgo.RecordDeliveryTimeout(5*time.Second)), p.topic), 50, 5*time.Second, nil)
 	p.done.Go(func() { relay.Run(ctx, 10*time.Millisecond, discard) })
 
 	group := kafka.NewClient(t,
@@ -150,7 +150,7 @@ func TestPipelineDeadLettersWhenTheOutcomeStaysUnknown(t *testing.T) {
 	a := closedAuction(t, pool, 1100)
 	url := provider(t, pool, 0, lostAfter, lostAfter)
 	b := breaker.New(1000, time.Second, time.Now, nil)
-	s := settlement.NewSettler(pool, settlement.NewPaymentClient(url, 200*time.Millisecond), b, 2, time.Millisecond, 2*time.Millisecond)
+	s := settlement.NewSettler(pool, settlement.NewPaymentClient(url, 200*time.Millisecond), b, 2, time.Millisecond, 2*time.Millisecond, nil)
 	p := startPipeline(t, pool, s)
 
 	dead := kafka.ReadAll(t, p.dlq, 1, 20*time.Second)

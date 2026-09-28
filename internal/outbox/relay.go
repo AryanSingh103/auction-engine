@@ -38,18 +38,33 @@ type Publisher interface {
 // cannot collide with small integers another feature might pick.
 const LockKey int64 = 0x6f7574626f78
 
+// Observer receives the outcome of every batch, for metrics.
+type Observer interface {
+	// Batch reports one PublishBatch: result is "published" (n events,
+	// possibly 0), "standby" (another relay held the lock) or "failed".
+	Batch(result string, n int, d time.Duration)
+}
+
+type nopObserver struct{}
+
+func (nopObserver) Batch(string, int, time.Duration) {}
+
 // Relay moves events from the outbox table to a Publisher.
 type Relay struct {
 	pool           *pgxpool.Pool
 	pub            Publisher
 	batchSize      int
 	publishTimeout time.Duration
+	obs            Observer
 }
 
 // NewRelay returns a relay that publishes up to batchSize events per
-// transaction, giving each Publish call publishTimeout.
-func NewRelay(pool *pgxpool.Pool, pub Publisher, batchSize int, publishTimeout time.Duration) *Relay {
-	return &Relay{pool: pool, pub: pub, batchSize: batchSize, publishTimeout: publishTimeout}
+// transaction, giving each Publish call publishTimeout. obs may be nil.
+func NewRelay(pool *pgxpool.Pool, pub Publisher, batchSize int, publishTimeout time.Duration, obs Observer) *Relay {
+	if obs == nil {
+		obs = nopObserver{}
+	}
+	return &Relay{pool: pool, pub: pub, batchSize: batchSize, publishTimeout: publishTimeout, obs: obs}
 }
 
 // PublishBatch publishes the oldest unpublished events (up to the batch
@@ -70,6 +85,17 @@ func NewRelay(pool *pgxpool.Pool, pub Publisher, batchSize int, publishTimeout t
 // in order, even though a slow transaction on another auction may commit a
 // lower id later (it is simply published in a later batch).
 func (r *Relay) PublishBatch(ctx context.Context) (published int, held bool, err error) {
+	start := time.Now()
+	defer func() {
+		switch {
+		case err != nil:
+			r.obs.Batch("failed", 0, time.Since(start))
+		case !held:
+			r.obs.Batch("standby", 0, time.Since(start))
+		default:
+			r.obs.Batch("published", published, time.Since(start))
+		}
+	}()
 	err = pgx.BeginFunc(ctx, r.pool, func(tx pgx.Tx) error {
 		if err := tx.QueryRow(ctx, `SELECT pg_try_advisory_xact_lock($1)`, LockKey).Scan(&held); err != nil {
 			return fmt.Errorf("take relay lock: %w", err)

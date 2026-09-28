@@ -90,7 +90,7 @@ func run() error {
 		logger.Warn("payment circuit breaker changed state", slog.String("from", from.String()), slog.String("to", to.String()))
 	})
 	settler := settlement.NewSettler(pool, settlement.NewPaymentClient(cfg.PaysimURL, cfg.PaymentTimeout), b,
-		int(cfg.PaymentMaxAttempts), cfg.PaymentBackoffBase, cfg.PaymentBackoffCap)
+		int(cfg.PaymentMaxAttempts), cfg.PaymentBackoffBase, cfg.PaymentBackoffCap, nil)
 	consumer := settlement.NewConsumer(client, settler, cfg.SettlementDLQTopic, cfg.SettlementRetryInterval, logger)
 
 	logger.Info("settler started", slog.String("topic", cfg.OutboxTopic), slog.String("group", cfg.SettlementGroup))

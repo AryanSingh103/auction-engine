@@ -115,7 +115,7 @@ const (
 
 func newSettler(pool *pgxpool.Pool, url string, maxAttempts int) *settlement.Settler {
 	b := breaker.New(1000, time.Second, time.Now, nil) // effectively off; tested on its own
-	return settlement.NewSettler(pool, settlement.NewPaymentClient(url, 200*time.Millisecond), b, maxAttempts, time.Millisecond, 5*time.Millisecond)
+	return settlement.NewSettler(pool, settlement.NewPaymentClient(url, 200*time.Millisecond), b, maxAttempts, time.Millisecond, 5*time.Millisecond, nil)
 }
 
 type ledger struct {
@@ -310,7 +310,7 @@ func TestOpenBreakerPausesCalls(t *testing.T) {
 	pay := &countingPayer{fail: 2}
 	const openFor = 150 * time.Millisecond
 	b := breaker.New(1, openFor, time.Now, nil)
-	s := settlement.NewSettler(pool, pay, b, 5, time.Millisecond, 2*time.Millisecond)
+	s := settlement.NewSettler(pool, pay, b, 5, time.Millisecond, 2*time.Millisecond, nil)
 	if out, err := s.Settle(t.Context(), a); err != nil || out != settlement.Paid {
 		t.Fatalf("settle = %v, %v; want paid", out, err)
 	}
