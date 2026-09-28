@@ -37,6 +37,7 @@ func validEnv() map[string]string {
 		"WS_SYNC_INTERVAL":      "5s",
 
 		"RATE_LIMIT_BIDS_PER_SECOND": "10",
+		"BID_MAX_IN_FLIGHT":          "40",
 		"RATE_LIMIT_BID_BURST":       "20",
 	}
 }
@@ -67,6 +68,7 @@ func validConfig() Config {
 		WSSyncInterval:         5 * time.Second,
 		RateLimitBidsPerSecond: 10,
 		RateLimitBidBurst:      20,
+		BidMaxInFlight:         40,
 	}
 }
 

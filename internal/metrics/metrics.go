@@ -32,6 +32,7 @@ type Metrics struct {
 	bids bidMetrics
 
 	rateLimit *prometheus.CounterVec
+	shed      *prometheus.CounterVec
 	cache     *prometheus.CounterVec
 
 	liveConns   prometheus.Gauge
@@ -68,6 +69,13 @@ func New() *Metrics {
 	for _, r := range []string{"allowed", "limited", "error"} {
 		m.rateLimit.WithLabelValues(r)
 	}
+	m.shed = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "bid_shedding_decisions_total",
+		Help: "Bid load-shedding decisions: admitted, or shed (503 because the instance was at BID_MAX_IN_FLIGHT).",
+	}, []string{"result"})
+	for _, r := range []string{"admitted", "shed"} {
+		m.shed.WithLabelValues(r)
+	}
 	m.cache = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "auction_cache_operations_total",
 		Help: "Auction cache operations: get (hit, miss, error) and put (stored, stale = a newer version was already cached, error).",
@@ -93,7 +101,7 @@ func New() *Metrics {
 	for _, or := range [][2]string{{"publish", "ok"}, {"publish", "error"}, {"subscribe", "ok"}, {"subscribe", "error"}, {"receive", "ok"}, {"receive", "bad_message"}} {
 		m.liveBus.WithLabelValues(or[0], or[1])
 	}
-	m.registry.MustRegister(m.rateLimit, m.cache, m.liveConns, m.liveDropped, m.liveBus)
+	m.registry.MustRegister(m.rateLimit, m.shed, m.cache, m.liveConns, m.liveDropped, m.liveBus)
 	return m
 }
 
@@ -152,6 +160,15 @@ func methodLabel(m string) string {
 
 // RateLimitDecision counts one rate-limit decision.
 func (m *Metrics) RateLimitDecision(result string) { m.rateLimit.WithLabelValues(result).Inc() }
+
+// BidShedding counts one load-shedding decision.
+func (m *Metrics) BidShedding(shed bool) {
+	if shed {
+		m.shed.WithLabelValues("shed").Inc()
+	} else {
+		m.shed.WithLabelValues("admitted").Inc()
+	}
+}
 
 // CacheOperation counts one auction cache operation.
 func (m *Metrics) CacheOperation(op, result string) { m.cache.WithLabelValues(op, result).Inc() }

@@ -81,7 +81,7 @@ nuke: ## Stop the stack AND delete the database volume (destroys all local data)
 
 .PHONY: bench-smoke
 bench-smoke: ## 10s load run (20 bidders, one auction) inside compose; fails if its checks fail
-	RATE_LIMIT_BIDS_PER_SECOND=1000000 RATE_LIMIT_BID_BURST=1000000 docker compose up -d --wait --build api
+	RATE_LIMIT_BIDS_PER_SECOND=1000000 RATE_LIMIT_BID_BURST=1000000 BID_MAX_IN_FLIGHT=1000000 docker compose up -d --wait --build api
 	docker compose --profile bench run --rm --build loadgen --workers=20 --warmup=2s --duration=10s --out=- > /dev/null
 	docker compose up -d --wait api
 

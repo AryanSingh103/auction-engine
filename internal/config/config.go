@@ -63,6 +63,9 @@ type Config struct {
 	// bucket on bid placement (docs/decisions/018).
 	RateLimitBidsPerSecond float64
 	RateLimitBidBurst      int32
+	// BidMaxInFlight caps concurrent bid requests per instance; beyond it
+	// bids are shed with 503 (docs/decisions/025).
+	BidMaxInFlight int32
 	// BidLocking selects the bid path's concurrency strategy: "pessimistic"
 	// (row lock for the whole transaction, the default in .env.example) or
 	// "optimistic" (kept for benchmarking; see docs/decisions/014).
@@ -182,6 +185,11 @@ func Load(lookup LookupFunc) (Config, error) {
 		errs = append(errs, err)
 	} else {
 		cfg.RateLimitBidBurst = n
+	}
+	if n, err := positiveInt32(lookup, "BID_MAX_IN_FLIGHT"); err != nil {
+		errs = append(errs, err)
+	} else {
+		cfg.BidMaxInFlight = n
 	}
 
 	if v, err := required(lookup, "BID_LOCKING"); err != nil {

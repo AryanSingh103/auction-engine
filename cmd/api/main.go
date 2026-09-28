@@ -109,6 +109,8 @@ func run() error {
 			BidLimiter: ratelimit.New(rdb, "ratelimit:",
 				cfg.RateLimitBidsPerSecond, int(cfg.RateLimitBidBurst)),
 			RecordRateLimit: m.RateLimitDecision,
+			MaxInFlightBids: int(cfg.BidMaxInFlight),
+			RecordShed:      m.BidShedding,
 			Live: &httpapi.LiveOptions{
 				Hub: hub, PingInterval: cfg.WSPingInterval, WriteTimeout: cfg.WSWriteTimeout,
 				OnConnections: m.LiveConnections,

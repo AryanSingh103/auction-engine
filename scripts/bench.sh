@@ -36,9 +36,9 @@ fresh_stack() { # $1 = BID_LOCKING
   docker compose stop api >/dev/null 2>&1 || true
   docker compose rm -sf postgres migrate >/dev/null 2>&1
   docker volume rm -f auction-engine_pgdata >/dev/null
-  # Rate limits raised far above what one bidder can send: the benchmark
-  # measures the bid path, not the per-user limiter.
-  BID_LOCKING=$1 RATE_LIMIT_BIDS_PER_SECOND=1000000 RATE_LIMIT_BID_BURST=1000000 \
+  # Rate limits and the shedding cap raised far above what the load sends:
+  # the benchmark measures the bid path, not the limiter or the shedder.
+  BID_LOCKING=$1 RATE_LIMIT_BIDS_PER_SECOND=1000000 RATE_LIMIT_BID_BURST=1000000 BID_MAX_IN_FLIGHT=1000000 \
     docker compose up -d --wait postgres redis migrate api prometheus >/dev/null 2>&1
 }
 

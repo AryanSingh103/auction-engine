@@ -120,6 +120,7 @@ services:
       WS_SYNC_INTERVAL: ${WS_SYNC_INTERVAL:?set WS_SYNC_INTERVAL in .env}
       RATE_LIMIT_BIDS_PER_SECOND: ${RATE_LIMIT_BIDS_PER_SECOND:?set RATE_LIMIT_BIDS_PER_SECOND in .env}
       RATE_LIMIT_BID_BURST: ${RATE_LIMIT_BID_BURST:?set RATE_LIMIT_BID_BURST in .env}
+      BID_MAX_IN_FLIGHT: ${BID_MAX_IN_FLIGHT:?set BID_MAX_IN_FLIGHT in .env}
     # Hardening that costs nothing with a static binary: no writes to the
     # image filesystem, no Linux capabilities, no privilege escalation via
     # setuid binaries.

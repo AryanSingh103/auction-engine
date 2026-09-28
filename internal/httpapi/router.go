@@ -32,6 +32,11 @@ type Options struct {
 	// RecordRateLimit receives each limiter decision ("allowed", "limited",
 	// "error") for metrics. Optional.
 	RecordRateLimit func(result string)
+	// MaxInFlightBids, if positive, caps concurrent bid requests on this
+	// instance; the rest are shed with 503 (docs/decisions/025).
+	MaxInFlightBids int
+	// RecordShed receives each shedding decision for metrics. Optional.
+	RecordShed func(shed bool)
 }
 
 // NewRouter returns the API's root handler.
@@ -67,6 +72,14 @@ func NewRouter(o Options) http.Handler {
 		r.Get("/auctions/{auctionID}", handleGetAuction(o.Auctions, o.Logger))
 
 		r.Group(func(r chi.Router) {
+			// Shedding first: it is the cheapest refusal.
+			if o.MaxInFlightBids > 0 {
+				record := o.RecordShed
+				if record == nil {
+					record = func(bool) {}
+				}
+				r.Use(shedBids(o.MaxInFlightBids, o.Logger, record))
+			}
 			// Only bid placement is rate limited; reads are served from
 			// cache and cheap, and limiting them would hide the auction
 			// from bidders.
