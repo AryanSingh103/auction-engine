@@ -14,6 +14,7 @@ Keying Kafka messages by `auction_id` only preserves order if events are *produc
 - per-auction sequence numbers, with consumers that tolerate reordering
 
 ## R3. Exactly one charge needs an idempotent payment provider (M4): critical
+**Addressed in M4 (ADR 023):** the simulator stores charges durably by idempotency key. Settlement uses the invoice id as the key (ADR 024).
 A payment call that times out has an unknown outcome. If we retry blindly, we can charge twice. Settlement idempotency on our side is necessary but not sufficient. The fake payment service must accept an idempotency key and return the original result on a repeat, as Stripe does. The plan is to use the invoice id as that key.
 
 ## R4. Load shedding keyed on consumer lag (M4): questionable spec
