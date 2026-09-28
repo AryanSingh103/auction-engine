@@ -105,6 +105,12 @@ Run `make help` for the full list. The ones you'll use most:
 - `make test-page`: the live page's client-contract test (needs Node). CI runs it too.
 - `make psql`: a psql shell inside the Postgres container. `make logs`: follow every compose service.
 - **Two API instances** in compose: `api` on :8080 and `api2` on :8081. The live page is at `http://localhost:8080/`.
+- **Workers in compose (M4):**
+  - `redpanda`: Kafka API on :19092 from the host, `redpanda:9092` inside the network
+  - `relay` + `relay2`: the outbox publishers (one batch at a time, whoever holds the lock)
+  - `settler` + `settler2`: one settlement consumer group
+  - `paysim`: the flaky payment provider, internal only
+- **Inspect Kafka:** `docker compose exec redpanda rpk topic consume auction-events -o start`. The dead-letter topic is `settlement-dlq`.
 - **Observability:**
   - Grafana at `http://localhost:3000`. Dashboards are viewable without login; admin credentials are in `.env`.
   - Prometheus at `http://localhost:9090`.
@@ -138,10 +144,25 @@ CI (`.github/workflows/ci.yml`) runs lint, `make fmt-check vet test-race` and an
 - `deploy/`: Prometheus config, and Grafana provisioning plus the dashboard JSON (change dashboards here, not in the UI).
 - `deploy/terraform/trial/`: the destroyed M3.5 stack, kept for reference. Its state is local and git-ignored. Variables have no defaults, so pass them with `-var`.
 - `docs/benchmarks.md` + `docs/benchmarks/<date>/`: recorded numbers, with their raw data and environment.
+- **Outbox and settlement (M4):**
+  - `internal/outbox` + `cmd/relay`: publishes the outbox to Kafka, keyed by auction id. Each batch runs under a transaction-level advisory lock (ADR 022).
+  - `internal/kafkaclient`: franz-go clients and idempotent topic creation. `internal/testkafka`: the Redpanda harness.
+  - `internal/auction/close.go`: `CloseAuction`, which writes the `auction_closed` event. M5's closer will call it.
+  - `internal/paysim` + `cmd/paysim`: the fake provider, with durable idempotency and injected faults (ADR 023).
+  - `internal/settlement` + `cmd/settler`: invoice, charge once, retry unknown outcomes, dead-letter (ADR 024). `internal/breaker`: the circuit breaker.
+  - `internal/httpapi/shed.go`: bid load shedding (ADR 025).
+  - `internal/metrics/workers.go`: the relay's and settler's metrics.
 - `internal/testdb/`: testcontainers harness. One container per test binary, and a fresh database cloned from a migrated template per test.
 - `docs/decisions/`: ADRs, numbered `NNN-short-title.md`. `docs/open-questions.md`: spec gaps and risks R1–R18. `docs/interview/`: per-milestone interview questions.
 
-Database error codes: the guard trigger raises `AE001`–`AE006` and the deferred outbox check raises `AE007`. `internal/auction` maps them to domain errors wrapped with `ErrRejectedByDatabaseGuard`. Only one case is expected in correct operation: `ErrAuctionEnded` when `end_at` falls between the Go and trigger clock reads (`IsExpectedGuardRejection`). Any other guard rejection means the Go rules missed something. The hardening migrations add `AE008` (bids append-only), `AE009` (outbox append-only except marking published), `AE010` (status only open→closed) and `AE011` (head only advances one link).
+Database error codes: the guard trigger raises `AE001`–`AE006` and the deferred outbox check raises `AE007`. `internal/auction` maps them to domain errors wrapped with `ErrRejectedByDatabaseGuard`. Only one case is expected in correct operation: `ErrAuctionEnded` when `end_at` falls between the Go and trigger clock reads (`IsExpectedGuardRejection`). Any other guard rejection means the Go rules missed something. The hardening migrations add `AE008` (bids append-only), `AE009` (outbox append-only except marking published), `AE010` (status only open→closed) and `AE011` (head only advances one link). M4 adds:
+- `AE012`: no close before `end_at`
+- `AE013`: close without its event fails at commit
+- `AE014`: no close event for an open auction
+- `AE015`: an invoice must match the closed result
+- `AE016`: invoice status only moves pending→paid, pending→failed, or failed→pending, and invoices are never deleted
+
+`internal/invariants` has a `SafetyMode` (holds at every instant) and a `DrainedMode` (it also checks the eventual settlement properties, so use it only once nothing is in flight).
 
 **Lock order:** always lock the auction row first. Every path that touches several of auctions, users, bids and outbox must follow it (R14).
 
@@ -156,6 +177,9 @@ M3 left a **must-fix for M5: the cache version ignores `end_at`** (R17). R15 and
 Notes for whoever picks this up:
 - **`README.md` runs ahead of the code.** At the owner's request (2026-09-25) it describes the finished system: the outbox publisher, settlement, the closer, load shedding, the AWS deploy and fault injection are written up as done, although they are M4–M7 work. Use this status section and `docs/open-questions.md` for what is actually built; never treat the README as evidence that something exists. Its only numbers are real M2 benchmark results, and it must never gain invented ones.
 - `make run` sources `.env` in the shell. The compose `api` service gets an explicit variable list, not the whole `.env`, always listens on `:8080` inside the container, and uses an in-network `DATABASE_URL` built from the `POSTGRES_*` variables.
+- **Settlement statuses mean what the provider guarantees:** a timeout or exhausted retries leave an invoice `pending`, never `failed`, because a charge may exist. Never "simplify" that.
+- **Tests that need to stop a worker must wait for its commit first:** a Kafka ack is not a marked outbox row.
+- **When piping a gate command, check its exit code:** `make lint | tail` and `go test | grep` hide failures (this happened in M4). Use `if go test ...; then commit; fi`.
 - `SHUTDOWN_TIMEOUT` bounds the **whole** graceful shutdown (API drain, metrics server, live handlers). It must stay below compose's `stop_grace_period` (20s) and the ECS `stopTimeout` (20s in the trial).
 - **AWS:** the IAM user `aryan-cli` in us-east-2 has a $10 budget. Push to ECR with `aws ecr get-login-password | docker login --password-stdin`, so the token never appears in output. Creating anything billable still needs the owner's go-ahead (R10).
 - Colima only shares `$HOME` into its VM. Bind mounts from `/tmp` or `/private/tmp` show up empty inside containers.
