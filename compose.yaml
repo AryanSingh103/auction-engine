@@ -44,6 +44,33 @@ services:
       timeout: 3s
       retries: 15
 
+  # Kafka-compatible broker for the outbox and settlement (M4). One node in
+  # dev-container mode (relaxed fsync, one core): fine for local work, never
+  # a durability claim. Two listeners because Kafka clients connect to the
+  # address the broker ADVERTISES, not the one they dialed: containers get
+  # redpanda:9092, the host gets 127.0.0.1 on the published port.
+  redpanda:
+    image: docker.redpanda.com/redpandadata/redpanda:v26.2.3
+    command:
+      - redpanda
+      - start
+      - --kafka-addr=internal://0.0.0.0:9092,external://0.0.0.0:19092
+      - --advertise-kafka-addr=internal://redpanda:9092,external://127.0.0.1:${REDPANDA_HOST_PORT:?set REDPANDA_HOST_PORT in .env}
+      - --mode=dev-container
+      - --smp=1
+      # Caps Seastar's memory; by default it claims most of the VM.
+      - --memory=1G
+      - --default-log-level=warn
+    ports:
+      - "127.0.0.1:${REDPANDA_HOST_PORT:?set REDPANDA_HOST_PORT in .env}:19092"
+    volumes:
+      - redpandadata:/var/lib/redpanda/data
+    healthcheck:
+      test: ["CMD", "rpk", "cluster", "health", "--exit-when-healthy"]
+      interval: 3s
+      timeout: 10s
+      retries: 20
+
   # One-shot schema migration. Runs to completion before the API starts;
   # the API never migrates on its own (docs/decisions/006).
   migrate:
@@ -176,5 +203,6 @@ services:
 
 volumes:
   pgdata:
+  redpandadata:
   promdata:
   grafanadata:
