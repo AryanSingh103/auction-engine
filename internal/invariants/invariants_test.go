@@ -145,6 +145,22 @@ func TestSafetyModeLeavesOutDrainedChecks(t *testing.T) {
 	}
 }
 
+// A charge on a failed invoice is caught even mid-flight.
+func TestSafetyModeCatchesChargeOnFailedInvoice(t *testing.T) {
+	pool := setup(t)
+	exec(t, pool, closedWon+`
+		INSERT INTO invoices (id, auction_id, bid_id, winner_id, amount, status, failure, settled_at) OVERRIDING SYSTEM VALUE
+		VALUES (1, 1, 1, 1, 1000, 'failed', 'declined', now());
+		INSERT INTO paysim.charges (idempotency_key, id, amount, customer_id) VALUES ('invoice-1', 'ch_1', 1000, 1);`)
+	got, _, err := invariants.Run(t.Context(), pool, invariants.SafetyMode)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(got) != 1 || got[0].Check != "no charge on a failed or missing invoice" {
+		t.Errorf("SafetyMode = %v, want the charge on the failed invoice", got)
+	}
+}
+
 // Every check must detect a violation planted for it; a check that cannot
 // fail proves nothing.
 func TestEachCheckDetectsItsViolation(t *testing.T) {
@@ -181,8 +197,11 @@ func TestEachCheckDetectsItsViolation(t *testing.T) {
 		{"paid invoices have exactly their charge", closedWon + `
 			INSERT INTO invoices (auction_id, bid_id, winner_id, amount, status, payment_id, settled_at)
 			VALUES (1, 1, 1, 1000, 'paid', 'ch_1', now());`},
-		{"no charge without a paid invoice", paidInvoice + `
+		{"no charge on a failed or missing invoice", paidInvoice + `
 			INSERT INTO paysim.charges (idempotency_key, id, amount, customer_id) VALUES ('invoice-999', 'ch_2', 1000, 1);`},
+		{"no charge left on a pending invoice", closedWon + `
+			INSERT INTO invoices (id, auction_id, bid_id, winner_id, amount) OVERRIDING SYSTEM VALUE VALUES (1, 1, 1, 1, 1000);
+			INSERT INTO paysim.charges (idempotency_key, id, amount, customer_id) VALUES ('invoice-1', 'ch_1', 1000, 1);`},
 	}
 
 	// Guard against a check being added without a planted violation.

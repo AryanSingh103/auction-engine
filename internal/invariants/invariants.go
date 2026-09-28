@@ -189,15 +189,26 @@ var Checks = []Check{
 		Needs: "paysim.charges",
 	},
 	{
-		// The other direction: every settlement charge belongs to a paid
-		// invoice. A charge on a failed or missing invoice is money taken
-		// that our books do not show.
-		Name: "no charge without a paid invoice",
+		// The other direction, at every instant: a charge on a failed or
+		// missing invoice is money taken that our books will never show
+		// (found by the M4 review: this was drained-only before).
+		Name: "no charge on a failed or missing invoice",
 		SQL: `
 			SELECT format('charge %s (key %s) but the invoice is %s', c.id, c.idempotency_key, coalesce(i.status, 'missing'))
 			FROM paysim.charges c
 			LEFT JOIN invoices i ON c.idempotency_key = 'invoice-' || i.id
-			WHERE c.idempotency_key LIKE 'invoice-%' AND (i.id IS NULL OR i.status <> 'paid')`,
+			WHERE c.idempotency_key LIKE 'invoice-%' AND (i.id IS NULL OR i.status = 'failed')`,
+		Needs: "paysim.charges",
+	},
+	{
+		// Once drained, a charge on a pending invoice (a lost response not
+		// yet replayed) must have been recorded as paid.
+		Name: "no charge left on a pending invoice",
+		SQL: `
+			SELECT format('charge %s (key %s) but the invoice is still pending', c.id, c.idempotency_key)
+			FROM paysim.charges c
+			JOIN invoices i ON c.idempotency_key = 'invoice-' || i.id
+			WHERE i.status = 'pending'`,
 		Needs:   "paysim.charges",
 		Drained: true,
 	},
