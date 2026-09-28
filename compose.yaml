@@ -170,6 +170,25 @@ services:
   relay2:
     <<: *relay
 
+  # Fake payment provider (docs/decisions/023): fails, loses responses and
+  # hangs on purpose. Only settlement talks to it; not published to the host.
+  paysim:
+    build: .
+    entrypoint: ["/paysim"]
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:?set LOG_LEVEL in .env}
+      PAYSIM_ADDR: ":8090"
+      DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?sslmode=disable
+      PAYSIM_FAILURE_RATE: ${PAYSIM_FAILURE_RATE:?set PAYSIM_FAILURE_RATE in .env}
+      PAYSIM_HANG_RATE: ${PAYSIM_HANG_RATE:?set PAYSIM_HANG_RATE in .env}
+      PAYSIM_HANG_DURATION: ${PAYSIM_HANG_DURATION:?set PAYSIM_HANG_DURATION in .env}
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+
   # A second API instance, so cross-instance behavior (Redis pub/sub
   # fan-out, the shared rate-limit buckets, the shared cache) is exercised
   # locally. Same configuration; only the host port differs. In M6 both sit
