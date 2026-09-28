@@ -76,13 +76,10 @@ func LoadRelay(lookup LookupFunc) (RelayConfig, error) {
 			*n.dst = v
 		}
 	}
-	// Kafka's wire type for the replication factor is int16.
-	if v, err := positiveInt32(lookup, "KAFKA_REPLICATION_FACTOR"); err != nil {
+	if v, err := replicationFactor(lookup); err != nil {
 		errs = append(errs, err)
-	} else if v <= math.MaxInt16 && v >= 1 { // both bounds here, where the conversion is
-		cfg.KafkaReplicationFactor = int16(v)
 	} else {
-		errs = append(errs, fmt.Errorf("KAFKA_REPLICATION_FACTOR: %d is above %d", v, math.MaxInt16))
+		cfg.KafkaReplicationFactor = v
 	}
 	durationsOK := true
 	for _, d := range []struct {
@@ -110,6 +107,19 @@ func LoadRelay(lookup LookupFunc) (RelayConfig, error) {
 		return RelayConfig{}, errors.Join(errs...)
 	}
 	return cfg, nil
+}
+
+// replicationFactor parses KAFKA_REPLICATION_FACTOR, whose Kafka wire type
+// is int16.
+func replicationFactor(lookup LookupFunc) (int16, error) {
+	v, err := positiveInt32(lookup, "KAFKA_REPLICATION_FACTOR")
+	if err != nil {
+		return 0, err
+	}
+	if v > math.MaxInt16 || v < 1 { // both bounds here, where the conversion is
+		return 0, fmt.Errorf("KAFKA_REPLICATION_FACTOR: %d is above %d", v, math.MaxInt16)
+	}
+	return int16(v), nil
 }
 
 // brokers parses KAFKA_BROKERS: comma-separated host:port entries, none
