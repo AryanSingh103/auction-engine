@@ -51,10 +51,13 @@ func (s *Service) CloseAuction(ctx context.Context, id int64) (closed bool, err 
 			return ErrAuctionNotEnded
 		}
 
-		if _, err := tx.Exec(ctx, `UPDATE auctions SET status = 'closed' WHERE id = $1`, id); err != nil {
+		// The trigger records closed_at from the database clock; the event
+		// carries that same time.
+		var closedAt time.Time
+		if err := tx.QueryRow(ctx, `UPDATE auctions SET status = 'closed' WHERE id = $1 RETURNING closed_at`, id).Scan(&closedAt); err != nil {
 			return fmt.Errorf("close auction: %w", err)
 		}
-		ev := ClosedEvent{AuctionID: id, ClosedAt: now}
+		ev := ClosedEvent{AuctionID: id, ClosedAt: closedAt}
 		if a.Head != nil {
 			ev.WinnerID, ev.BidID, ev.Amount = &a.Head.UserID, &a.Head.BidID, &a.Head.Price
 		}

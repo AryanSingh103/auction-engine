@@ -151,6 +151,17 @@ var Checks = []Check{
 			HAVING count(o.id) <> CASE WHEN a.status = 'closed' THEN 1 ELSE 0 END`,
 	},
 	{
+		// Invariant 4 at close: an auction closes no earlier than its
+		// (final, anti-snipe-extended) end, and after every accepted bid.
+		Name: "auctions close after their end and their bids",
+		SQL: `
+			SELECT format('auction %s closed at %s: end %s, last bid %s', a.id, a.closed_at, a.end_at, max(b.created_at))
+			FROM auctions a LEFT JOIN bids b ON b.auction_id = a.id
+			WHERE a.status = 'closed'
+			GROUP BY a.id, a.closed_at, a.end_at
+			HAVING a.closed_at < a.end_at OR max(b.created_at) >= a.closed_at`,
+	},
+	{
 		// Invariant 5, our side: one invoice per closed auction with a
 		// winner, and settled. "failed" counts as settled: the provider
 		// definitively declined, so there is correctly no charge (R5).

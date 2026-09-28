@@ -36,20 +36,10 @@ redis.call('PEXPIRE', KEYS[1], ARGV[3])
 return 1
 `)
 
-// Version orders states of one auction. The head bid id only grows (the
-// chain is append-only) and an auction only ever goes open -> closed, after
-// which its head can no longer change. So 2*head + closed strictly
-// increases with every state change.
-func Version(a auction.Auction) int64 {
-	var v int64
-	if a.Head != nil {
-		v = 2 * a.Head.BidID
-	}
-	if a.Status == auction.StatusClosed {
-		v++
-	}
-	return v
-}
+// Version orders states of one auction: the row's version column, which
+// the update trigger bumps on every change. (It used to be derived from
+// the head and status, which missed an end_at change: R17.)
+func Version(a auction.Auction) int64 { return a.Version }
 
 // Auctions caches auction state in Redis.
 type Auctions struct {

@@ -55,7 +55,7 @@ func setup(t *testing.T) *pgxpool.Pool {
 
 // closedWon closes auction 1 (after validBid) with its close event.
 const closedWon = validBid + `
-	UPDATE auctions SET status = 'closed' WHERE id = 1;
+	UPDATE auctions SET status = 'closed', closed_at = end_at WHERE id = 1;
 	INSERT INTO outbox (auction_id, event_type, payload) VALUES (1, 'auction_closed', '{}');`
 
 // paidInvoice settles closedWon: a paid invoice and the provider's charge.
@@ -86,8 +86,8 @@ func TestCleanDataHasNoViolations(t *testing.T) {
 		INSERT INTO outbox (auction_id, event_type, payload, bid_id) VALUES (1, 'bid_placed', '{}', 2);
 		UPDATE auctions SET current_bid_id = 2, current_leader_id = 2, current_price = 1100 WHERE id = 1;
 		-- a second auction, closed and settled
-		INSERT INTO auctions (item_id, start_at, end_at, starting_price, min_increment, status)
-		VALUES (1, now() - interval '2 hours', now() - interval '1 hour', 1000, 100, 'closed');
+		INSERT INTO auctions (item_id, start_at, end_at, starting_price, min_increment, status, closed_at)
+		VALUES (1, now() - interval '2 hours', now() - interval '1 hour', 1000, 100, 'closed', now());
 		INSERT INTO bids (id, auction_id, user_id, amount, idempotency_key, created_at) OVERRIDING SYSTEM VALUE
 		VALUES (3, 2, 3, 1000, 'k3', now() - interval '90 minutes');
 		INSERT INTO outbox (auction_id, event_type, payload, bid_id) VALUES (2, 'bid_placed', '{}', 3);
@@ -190,7 +190,10 @@ func TestEachCheckDetectsItsViolation(t *testing.T) {
 		{"every bid event has its bid", `
 			INSERT INTO outbox (auction_id, event_type, payload, bid_id) VALUES (1, 'bid_placed', '{}', 777);`},
 		{"closed auctions have one close event", `
-			UPDATE auctions SET status = 'closed' WHERE id = 1;`},
+			UPDATE auctions SET status = 'closed', closed_at = end_at WHERE id = 1;`},
+		{"auctions close after their end and their bids", validBid + `
+			UPDATE auctions SET status = 'closed', closed_at = end_at - interval '1 minute' WHERE id = 1;
+			INSERT INTO outbox (auction_id, event_type, payload) VALUES (1, 'auction_closed', '{}');`},
 		{"closed auctions with a winner have one settled invoice", closedWon},
 		{"invoices match their auction's result", closedWon + `
 			INSERT INTO invoices (auction_id, bid_id, winner_id, amount) VALUES (1, 1, 2, 1000);`},

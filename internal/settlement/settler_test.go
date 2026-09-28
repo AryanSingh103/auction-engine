@@ -73,7 +73,7 @@ func closedAuction(t *testing.T, pool *pgxpool.Pool, amount int64) int64 {
 			}
 		}
 	}
-	if _, err := pool.Exec(ctx, `UPDATE auctions SET end_at = clock_timestamp() WHERE id = $1`, id); err != nil {
+	if err := testdb.EndAuctionNow(ctx, pool, id); err != nil {
 		t.Fatalf("end auction: %v", err)
 	}
 	if _, err := svc.CloseAuction(ctx, id); err != nil {

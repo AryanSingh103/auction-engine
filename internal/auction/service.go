@@ -193,11 +193,18 @@ func writeBid(ctx context.Context, tx pgx.Tx, req PlaceBidRequest, a Auction, in
 		return Bid{}, fmt.Errorf("insert bid: %w", err)
 	}
 
+	// Anti-snipe (docs/decisions/026): a bid accepted within extend_window
+	// of the end pushes the end to bid time + extend_by. It is computed
+	// from the bid's recorded time, under the row lock, in the same UPDATE
+	// that advances the head; the update guard (AE018) checks exactly this.
 	if _, err := tx.Exec(ctx, `
 		UPDATE auctions
-		SET current_price = $2, current_leader_id = $3, current_bid_id = $4
+		SET current_price = $2, current_leader_id = $3, current_bid_id = $4,
+		    end_at = CASE WHEN $5::timestamptz >= end_at - extend_window
+		                  THEN GREATEST(end_at, $5::timestamptz + extend_by)
+		                  ELSE end_at END
 		WHERE id = $1`,
-		req.AuctionID, req.Amount, req.UserID, bid.ID); err != nil {
+		req.AuctionID, req.Amount, req.UserID, bid.ID, bid.CreatedAt); err != nil {
 		return Bid{}, fmt.Errorf("advance auction head: %w", err)
 	}
 
@@ -295,7 +302,7 @@ func findBidByKey(ctx context.Context, q querier, userID int64, key string) (Bid
 }
 
 const auctionColumns = `
-	SELECT id, item_id, start_at, end_at, starting_price, min_increment, status,
+	SELECT id, item_id, start_at, end_at, starting_price, min_increment, status, version,
 	       current_bid_id, current_leader_id, current_price
 	FROM auctions`
 
@@ -306,7 +313,7 @@ func lockAuction(ctx context.Context, tx pgx.Tx, id int64) (Auction, error) {
 func scanAuction(row pgx.Row) (Auction, error) {
 	var a Auction
 	var headBid, headUser, headPrice *int64
-	err := row.Scan(&a.ID, &a.ItemID, &a.StartAt, &a.EndAt, &a.StartingPrice, &a.MinIncrement, &a.Status,
+	err := row.Scan(&a.ID, &a.ItemID, &a.StartAt, &a.EndAt, &a.StartingPrice, &a.MinIncrement, &a.Status, &a.Version,
 		&headBid, &headUser, &headPrice)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Auction{}, ErrAuctionNotFound

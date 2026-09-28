@@ -623,7 +623,7 @@ func (f *fixture) endedWithBids(t *testing.T) (auction, first, second int64) {
 	if err != nil {
 		t.Fatalf("second bid: %v", err)
 	}
-	if _, err := f.pool.Exec(ctx, `UPDATE auctions SET end_at = clock_timestamp() WHERE id = $1`, auction); err != nil {
+	if err := testdb.EndAuctionNow(ctx, f.pool, auction); err != nil {
 		t.Fatalf("end auction: %v", err)
 	}
 	if err := f.closeAuction(ctx, auction); err != nil {
@@ -722,5 +722,91 @@ func TestInvoiceLifecycle(t *testing.T) {
 	} {
 		_, err := f.pool.Exec(ctx, sql, declined)
 		wantPgError(t, err, "AE016", "")
+	}
+}
+
+// R19: end_at is pinned. It moves only by the anti-snipe rule, in the
+// update that advances the head, and nothing about a closed auction moves.
+func TestAuctionEndIsPinned(t *testing.T) {
+	f := newFixture(t)
+	ctx := t.Context()
+
+	// AE017: an auction cannot be born closed or with a head.
+	_, err := f.pool.Exec(ctx, `
+		INSERT INTO auctions (item_id, start_at, end_at, starting_price, min_increment, status, closed_at)
+		VALUES ($1, clock_timestamp() - interval '2 hours', clock_timestamp() - interval '1 hour', 1000, 100, 'closed', clock_timestamp())`, f.item)
+	wantPgError(t, err, "AE017", "")
+
+	// AE018: end_at cannot move on its own, earlier (the old way around
+	// AE012) or later.
+	for _, expr := range []string{"end_at - interval '2 hours'", "end_at + interval '1 minute'"} {
+		_, err = f.pool.Exec(ctx, `UPDATE auctions SET end_at = `+expr+` WHERE id = $1`, f.auction)
+		wantPgError(t, err, "AE018", "")
+	}
+
+	// AE019: the terms are fixed.
+	_, err = f.pool.Exec(ctx, `UPDATE auctions SET min_increment = 1 WHERE id = $1`, f.auction)
+	wantPgError(t, err, "AE019", "")
+
+	// Every update bumps the version; closing records closed_at >= end_at.
+	ended := f.newAuction(t, "clock_timestamp() - interval '2 hours'", "clock_timestamp() - interval '1 hour'")
+	if err := f.closeAuction(ctx, ended); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+	var version int64
+	var closedOK bool
+	mustScan(t, f.pool.QueryRow(ctx, `SELECT version, closed_at >= end_at FROM auctions WHERE id = $1`, ended), &version, &closedOK)
+	if version != 1 || !closedOK {
+		t.Errorf("after close: version %d, closed_at >= end_at %v; want 1, true", version, closedOK)
+	}
+
+	// AE019: a closed auction never changes again, not even its end.
+	_, err = f.pool.Exec(ctx, `UPDATE auctions SET end_at = end_at + interval '1 day' WHERE id = $1`, ended)
+	wantPgError(t, err, "AE019", "")
+	_, err = f.pool.Exec(ctx, `UPDATE auctions SET closed_at = NULL WHERE id = $1`, ended)
+	wantPgError(t, err, "AE019", "")
+}
+
+// Anti-snipe: a bid inside extend_window must move the end to bid time +
+// extend_by, in the same update as the head; no other end is accepted.
+func TestAntiSnipeExtension(t *testing.T) {
+	f := newFixture(t)
+	ctx := t.Context()
+	var a int64
+	mustScan(t, f.pool.QueryRow(ctx, `
+		INSERT INTO auctions (item_id, start_at, end_at, starting_price, min_increment, extend_window, extend_by)
+		VALUES ($1, clock_timestamp() - interval '1 hour', clock_timestamp() + interval '30 minutes', 1000, 100,
+		        interval '1 hour', interval '2 hours') RETURNING id`, f.item), &a)
+
+	// The fixture's bid leaves end_at alone, which is wrong inside the
+	// window: the whole transaction fails.
+	_, err := f.placeBid(ctx, a, f.users[0], 1000, nil, "k1")
+	wantPgError(t, err, "AE018", "")
+
+	// Doing it right works and moves the end to bid time + 2 hours.
+	err = pgx.BeginFunc(ctx, f.pool, func(tx pgx.Tx) error {
+		var id int64
+		if err := tx.QueryRow(ctx, `
+			INSERT INTO bids (auction_id, user_id, amount, idempotency_key) VALUES ($1, $2, 1000, 'k2') RETURNING id`,
+			a, f.users[0]).Scan(&id); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `INSERT INTO outbox (auction_id, event_type, payload, bid_id) VALUES ($1, 'bid_placed', '{}', $2)`, a, id); err != nil {
+			return err
+		}
+		_, err := tx.Exec(ctx, `
+			UPDATE auctions SET current_price = 1000, current_leader_id = $2, current_bid_id = $3,
+			       end_at = (SELECT created_at FROM bids WHERE id = $3) + extend_by
+			WHERE id = $1`, a, f.users[0], id)
+		return err
+	})
+	if err != nil {
+		t.Fatalf("extending bid: %v", err)
+	}
+	var extended bool
+	mustScan(t, f.pool.QueryRow(ctx, `
+		SELECT a.end_at = b.created_at + interval '2 hours' FROM auctions a JOIN bids b ON b.id = a.current_bid_id WHERE a.id = $1`, a), &extended)
+	if !extended {
+		t.Error("end_at is not bid time + extend_by")
 	}
 }

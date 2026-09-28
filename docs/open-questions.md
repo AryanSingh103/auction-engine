@@ -97,7 +97,7 @@ In M2's hot-auction runs, 73–98% of bids were "too low". The pessimistic path 
 ## R17. Findings from the M3 review deferred to later milestones
 - **A Redis circuit breaker (M4).** When Redis black-holes (`docker compose pause redis`), every Redis call waits for its 200 ms timeout. The review measured a bid at about 0.7 s and 150 concurrent GETs at p50 1.6 s. The pool wait is now bounded (it was the worst part), but a breaker that skips Redis entirely while it's failing would remove the rest. M4 builds a circuit breaker for the payment service; reuse it here.
 - **The rate limiter charges replays.** It runs before the idempotency lookup, so an honest retry of a timed-out bid can get 429 instead of its replay. Also, `allkeys-lru` eviction under memory pressure resets buckets to full. Both are acceptable for a capacity limit on honest clients (ADR 018); revisit if the limit ever has to stop abuse.
-- **The cache version ignores `end_at` (M5, must fix).** `Version = 2*head + closed`. If M5's anti-snipe extends `end_at` in the same transaction as a bid, the head moves and the version grows, which is fine. But any change to `end_at` (or another displayed field) *without* a new bid would be rejected as "equal version", and the cache would keep the old value until its TTL. M5 must either make every `end_at` change go through a version bump or include an explicit version column.
+- **Resolved in M5 (ADR 026): the cache version ignores `end_at`.** The version is now a row column bumped by the update trigger on every change. `Version = 2*head + closed`. If M5's anti-snipe extends `end_at` in the same transaction as a bid, the head moves and the version grows, which is fine. But any change to `end_at` (or another displayed field) *without* a new bid would be rejected as "equal version", and the cache would keep the old value until its TTL. M5 must either make every `end_at` change go through a version bump or include an explicit version column.
 
 ## R18. Findings from the M3.5 trial deploy and review, deferred to M6
 - **Instance termination does not drain tasks.** When the ASG terminates an instance (replacement, instance refresh, health replacement), ECS is not told. In the trial, the task got SIGTERM 26s before it was deregistered from the target group, followed by about 60s with no task at all. M6 needs these together:
@@ -112,7 +112,7 @@ In M2's hot-auction runs, 73–98% of bids were "too low". The pessimistic path 
 - **IAM propagation on a fresh account.** The first apply failed because the AutoScaling service-linked role was created 5s before the first launch. The role now exists in this account. Do not add an `aws_iam_service_linked_role` resource for it: creating it would fail because it already exists.
 
 ## R19. Findings from the M4 review deferred to later milestones
-- **Pin `end_at` (M5, must fix).** The schema cannot yet stop an early close:
+- **Resolved in M5 (ADR 026, guards AE017–AE019 and the close-time audit): pin `end_at`.** The schema cannot yet stop an early close:
   - there is no INSERT guard, so a row can be created already `closed`
   - `UPDATE … SET end_at = <past>` followed by a close gets around AE012
 

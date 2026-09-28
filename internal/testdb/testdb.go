@@ -161,3 +161,18 @@ func migrate(ctx context.Context, url string) error {
 	}
 	return nil
 }
+
+// EndAuctionNow sets auction id's end_at to the database clock, so a test
+// can close an auction it has just bid on. end_at is pinned (AE018), so
+// this runs its one UPDATE with triggers off (session_replication_role =
+// replica, which needs the superuser the test container provides). Only
+// fixtures may do this; it is exactly what the schema forbids in real use.
+func EndAuctionNow(ctx context.Context, pool *pgxpool.Pool, id int64) error {
+	return pgx.BeginFunc(ctx, pool, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, `SET LOCAL session_replication_role = replica`); err != nil {
+			return err
+		}
+		_, err := tx.Exec(ctx, `UPDATE auctions SET end_at = clock_timestamp() WHERE id = $1`, id)
+		return err
+	})
+}

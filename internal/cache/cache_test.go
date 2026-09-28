@@ -26,24 +26,38 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
+// state is auction 7 with the given head. Its version is what the update
+// trigger would have reached: one bump per bid, plus one for the close.
 func state(head int64, status auction.Status) auction.Auction {
 	a := auction.Auction{ID: 7, ItemID: 1, StartingPrice: 1000, MinIncrement: 100, Status: status,
-		StartAt: time.Unix(1_800_000_000, 0).UTC(), EndAt: time.Unix(1_800_003_600, 0).UTC()}
+		StartAt: time.Unix(1_800_000_000, 0).UTC(), EndAt: time.Unix(1_800_003_600, 0).UTC(), Version: head}
 	if head > 0 {
 		a.Head = &auction.Head{BidID: head, UserID: head, Price: 1000 + head*100}
+	}
+	if status == auction.StatusClosed {
+		a.Version++
 	}
 	return a
 }
 
-func TestVersionOrdersEveryStateChange(t *testing.T) {
-	states := []auction.Auction{
-		state(0, auction.StatusOpen), state(0, auction.StatusClosed),
-		state(5, auction.StatusOpen), state(5, auction.StatusClosed), state(9, auction.StatusOpen),
+// R17: a change that leaves the head and status alone (here end_at) must
+// still replace the cached state, since the row's version moved.
+func TestNewerVersionWithSameHeadReplacesCachedState(t *testing.T) {
+	c := New(server.NewClient(t), time.Minute, nil)
+	ctx := t.Context()
+	old := state(3, auction.StatusOpen)
+	moved := old
+	moved.EndAt = old.EndAt.Add(time.Minute)
+	moved.Version++
+	if err := c.Put(ctx, old); err != nil {
+		t.Fatal(err)
 	}
-	for i := 1; i < len(states); i++ {
-		if Version(states[i]) <= Version(states[i-1]) {
-			t.Errorf("version of state %d (%d) not greater than state %d (%d)", i, Version(states[i]), i-1, Version(states[i-1]))
-		}
+	if err := c.Put(ctx, moved); err != nil {
+		t.Fatal(err)
+	}
+	a, ok, err := c.Get(ctx, 7)
+	if err != nil || !ok || !a.EndAt.Equal(moved.EndAt) {
+		t.Errorf("cached end = %s (ok %v, err %v), want %s", a.EndAt, ok, err, moved.EndAt)
 	}
 }
 

@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/AryanSingh103/auction-engine/internal/auction"
+	"github.com/AryanSingh103/auction-engine/internal/testdb"
 )
 
 // closeEvents returns the auction_closed payloads written for an auction.
@@ -62,7 +63,7 @@ func TestCloseAuctionUnknown(t *testing.T) {
 func TestCloseAuctionWithoutBids(t *testing.T) {
 	pool := server.NewDB(t, 4)
 	id := seed(t, pool, 1, "clock_timestamp() + interval '1 hour'")
-	if _, err := pool.Exec(t.Context(), `UPDATE auctions SET start_at = clock_timestamp() - interval '2 hours', end_at = clock_timestamp() - interval '1 hour' WHERE id = $1`, id); err != nil {
+	if err := testdb.EndAuctionNow(t.Context(), pool, id); err != nil {
 		t.Fatalf("move window: %v", err)
 	}
 	svc := auction.NewService(pool)

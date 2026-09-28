@@ -27,6 +27,9 @@ type Auction struct {
 	StartingPrice int64 // cents
 	MinIncrement  int64 // cents
 	Status        Status
+	// Version grows with every change to the row (the update trigger
+	// bumps it), so it orders any two states of one auction.
+	Version int64
 	// Head is the current highest accepted bid, or nil before the first one.
 	Head *Head
 }
