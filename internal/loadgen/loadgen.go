@@ -561,7 +561,8 @@ func checkDatabase(ctx context.Context, pool *pgxpool.Pool, auctions []int64, ac
 		auctions).Scan(&stored, &moved); err != nil {
 		return nil, fmt.Errorf("count stored bids: %w", err)
 	}
-	violations, err := invariants.Run(ctx, pool)
+	// Safety only: a load run does not drain settlement.
+	violations, skipped, err := invariants.Run(ctx, pool, invariants.SafetyMode)
 	if err != nil {
 		return nil, fmt.Errorf("run invariant checks: %w", err)
 	}
@@ -583,7 +584,7 @@ func checkDatabase(ctx context.Context, pool *pgxpool.Pool, auctions []int64, ac
 		{
 			Name:   "invariants hold",
 			Passed: len(violations) == 0,
-			Detail: fmt.Sprintf("%d violations %s", len(violations), strings.Join(vs, "; ")),
+			Detail: fmt.Sprintf("%d violations %s (skipped, table absent: %s)", len(violations), strings.Join(vs, "; "), strings.Join(skipped, ", ")),
 		},
 	}, nil
 }

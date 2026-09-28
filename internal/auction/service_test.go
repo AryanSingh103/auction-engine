@@ -83,7 +83,7 @@ func forEachLocking(t *testing.T, test func(*testing.T, auction.Locking)) {
 
 func assertInvariants(t *testing.T, pool *pgxpool.Pool) {
 	t.Helper()
-	violations, err := invariants.Run(t.Context(), pool)
+	violations, _, err := invariants.Run(t.Context(), pool, invariants.SafetyMode)
 	if err != nil {
 		t.Fatalf("invariant check could not run: %v", err)
 	}

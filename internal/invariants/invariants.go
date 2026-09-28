@@ -25,11 +25,30 @@ type Check struct {
 	Name string
 	// SQL returns one row per violation, as a single text column.
 	SQL string
+	// Needs, if set, is a table the check reads that may not exist where
+	// the check runs (paysim.charges exists only where the payment
+	// simulator has run). Without it the check is skipped, and Run
+	// reports that it was.
+	Needs string
+	// Drained marks an eventual property: it holds once the relay and the
+	// settlers have caught up, not at every instant (mid-flight, a closed
+	// auction may not be invoiced yet, and a lost response leaves a charge
+	// on a pending invoice). Run includes it only in DrainedMode.
+	Drained bool
 }
 
+// Mode selects which checks Run executes.
+type Mode int
+
+const (
+	// SafetyMode runs the checks that must hold at every instant.
+	SafetyMode Mode = iota
+	// DrainedMode also runs the eventual ones. Use it only when nothing is
+	// in flight: no unpublished outbox events and no pending settlement.
+	DrainedMode
+)
+
 // Checks lists every invariant that can be verified at this milestone.
-// Invariant 1 (exactly one winner) and 5 (exactly one charge) arrive with
-// closing (M5) and settlement (M4).
 var Checks = []Check{
 	{
 		// Invariant 3, first link: the first accepted bid meets the
@@ -121,6 +140,67 @@ var Checks = []Check{
 			FROM outbox o LEFT JOIN bids b ON b.id = o.bid_id
 			WHERE o.event_type = 'bid_placed' AND b.id IS NULL`,
 	},
+	{
+		// Closing: settlement hears of every close exactly once.
+		Name: "closed auctions have one close event",
+		SQL: `
+			SELECT format('auction %s (%s) has %s auction_closed events', a.id, a.status, count(o.id))
+			FROM auctions a
+			LEFT JOIN outbox o ON o.auction_id = a.id AND o.event_type = 'auction_closed'
+			GROUP BY a.id, a.status
+			HAVING count(o.id) <> CASE WHEN a.status = 'closed' THEN 1 ELSE 0 END`,
+	},
+	{
+		// Invariant 5, our side: one invoice per closed auction with a
+		// winner, and settled. "failed" counts as settled: the provider
+		// definitively declined, so there is correctly no charge (R5).
+		Name: "closed auctions with a winner have one settled invoice",
+		SQL: `
+			SELECT format('auction %s: %s invoice(s), statuses %s', a.id, count(i.id), coalesce(string_agg(i.status, ','), '-'))
+			FROM auctions a LEFT JOIN invoices i ON i.auction_id = a.id
+			WHERE a.status = 'closed' AND a.current_bid_id IS NOT NULL
+			GROUP BY a.id
+			HAVING count(i.id) <> 1 OR bool_or(i.status = 'pending')`,
+		Drained: true,
+	},
+	{
+		Name: "invoices match their auction's result",
+		SQL: `
+			SELECT format('invoice %s: bid %s, user %s, amount %s; auction %s is %s with head %s, user %s, price %s',
+			              i.id, i.bid_id, i.winner_id, i.amount, a.id, a.status, a.current_bid_id, a.current_leader_id, a.current_price)
+			FROM invoices i JOIN auctions a ON a.id = i.auction_id
+			WHERE a.status <> 'closed'
+			   OR a.current_bid_id IS DISTINCT FROM i.bid_id
+			   OR a.current_leader_id IS DISTINCT FROM i.winner_id
+			   OR a.current_price IS DISTINCT FROM i.amount`,
+	},
+	{
+		// Invariant 5, provider side: a paid invoice records the one charge
+		// the provider made under its key, for its amount and winner.
+		Name: "paid invoices have exactly their charge",
+		SQL: `
+			SELECT format('invoice %s paid with %s for %s to user %s; provider has %s',
+			              i.id, i.payment_id, i.amount, i.winner_id,
+			              -- format() renders NULLs as empty strings, so coalesce would not fire
+			              CASE WHEN c.id IS NULL THEN 'no charge' ELSE format('%s for %s to user %s', c.id, c.amount, c.customer_id) END)
+			FROM invoices i LEFT JOIN paysim.charges c ON c.idempotency_key = 'invoice-' || i.id
+			WHERE i.status = 'paid'
+			  AND (c.id IS DISTINCT FROM i.payment_id OR c.amount <> i.amount OR c.customer_id <> i.winner_id)`,
+		Needs: "paysim.charges",
+	},
+	{
+		// The other direction: every settlement charge belongs to a paid
+		// invoice. A charge on a failed or missing invoice is money taken
+		// that our books do not show.
+		Name: "no charge without a paid invoice",
+		SQL: `
+			SELECT format('charge %s (key %s) but the invoice is %s', c.id, c.idempotency_key, coalesce(i.status, 'missing'))
+			FROM paysim.charges c
+			LEFT JOIN invoices i ON c.idempotency_key = 'invoice-' || i.id
+			WHERE c.idempotency_key LIKE 'invoice-%' AND (i.id IS NULL OR i.status <> 'paid')`,
+		Needs:   "paysim.charges",
+		Drained: true,
+	},
 }
 
 // Violation is one broken invariant instance.
@@ -131,22 +211,43 @@ type Violation struct {
 
 func (v Violation) String() string { return v.Check + ": " + v.Detail }
 
-// Run executes every check and returns all violations found. An error means
-// a check could not run, not that an invariant failed.
-func Run(ctx context.Context, q Querier) ([]Violation, error) {
-	var out []Violation
+// Run executes the checks for mode and returns all violations found, and
+// the names of checks skipped because a table they need does not exist.
+// An error means a check could not run, not that an invariant failed.
+func Run(ctx context.Context, q Querier, mode Mode) (violations []Violation, skipped []string, err error) {
 	for _, c := range Checks {
+		if c.Drained && mode != DrainedMode {
+			continue
+		}
+		if c.Needs != "" {
+			exists, err := tableExists(ctx, q, c.Needs)
+			if err != nil {
+				return nil, nil, fmt.Errorf("check %q: %w", c.Name, err)
+			}
+			if !exists {
+				skipped = append(skipped, c.Name)
+				continue
+			}
+		}
 		rows, err := q.Query(ctx, c.SQL)
 		if err != nil {
-			return nil, fmt.Errorf("check %q: %w", c.Name, err)
+			return nil, nil, fmt.Errorf("check %q: %w", c.Name, err)
 		}
 		details, err := pgx.CollectRows(rows, pgx.RowTo[string])
 		if err != nil {
-			return nil, fmt.Errorf("check %q: %w", c.Name, err)
+			return nil, nil, fmt.Errorf("check %q: %w", c.Name, err)
 		}
 		for _, d := range details {
-			out = append(out, Violation{Check: c.Name, Detail: d})
+			violations = append(violations, Violation{Check: c.Name, Detail: d})
 		}
 	}
-	return out, nil
+	return violations, skipped, nil
+}
+
+func tableExists(ctx context.Context, q Querier, table string) (bool, error) {
+	rows, err := q.Query(ctx, `SELECT to_regclass($1) IS NOT NULL`, table)
+	if err != nil {
+		return false, err
+	}
+	return pgx.CollectExactlyOneRow(rows, pgx.RowTo[bool])
 }

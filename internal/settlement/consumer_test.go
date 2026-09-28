@@ -11,6 +11,7 @@ import (
 	"github.com/twmb/franz-go/pkg/kgo"
 
 	"github.com/AryanSingh103/auction-engine/internal/breaker"
+	"github.com/AryanSingh103/auction-engine/internal/invariants"
 	"github.com/AryanSingh103/auction-engine/internal/outbox"
 	"github.com/AryanSingh103/auction-engine/internal/settlement"
 )
@@ -87,6 +88,20 @@ func TestPipelineSettlesClosedAuctions(t *testing.T) {
 	}
 	if got := kafka.ReadAll(t, p.dlq, 1, time.Second); len(got) != 0 {
 		t.Errorf("%d dead-lettered events, want 0", len(got))
+	}
+
+	// Drained: every event published, every invoice settled. The full
+	// audit, eventual checks included, must now be clean.
+	waitFor(t, "the outbox to drain", func() bool {
+		var n int
+		if err := pool.QueryRow(t.Context(), `SELECT count(*) FROM outbox WHERE published_at IS NULL`).Scan(&n); err != nil {
+			t.Fatalf("count unpublished: %v", err)
+		}
+		return n == 0
+	})
+	violations, skipped, err := invariants.Run(t.Context(), pool, invariants.DrainedMode)
+	if err != nil || len(violations) != 0 || len(skipped) != 0 {
+		t.Errorf("drained audit = %v (skipped %v), %v; want clean", violations, skipped, err)
 	}
 }
 
