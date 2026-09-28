@@ -32,6 +32,7 @@ To be discussed at M4.
 - Must the first bid be `>= starting_price`, or `>= starting_price + min_increment`?
 - May the current leader raise their own bid?
 - Is there a reserve price? (Proposal: no.)
+- **Found in M4:** invariant 5 says "exactly one charge per closed auction", but a declined card correctly produces none. The working reading is: at most one charge per closed auction, and exactly one unless the provider definitively declined it (the invoice is then `failed`). The drained audit checks exactly that (ADR 024).
 
 ## R6. Identity (M1)
 **Resolved in M1 (ADR 010).** `X-User-ID` header, with no real auth.
