@@ -275,6 +275,14 @@ func TestConcurrentRelaysKeepPerAuctionOrder(t *testing.T) {
 
 	total := auctionCount * bidsEach
 	records := kafka.ReadAll(t, topic, total, 30*time.Second)
+	// Stop the relays only once every row is marked. Having all records in
+	// Kafka is not enough: the relay that sent the last batch may not have
+	// committed its marks yet, and cancelling it then rolls them back (the
+	// at-least-once window; those rows would be published again).
+	deadline := time.Now().Add(10 * time.Second)
+	for unpublished(t, pool) > 0 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
 	cancel()
 	running.Wait()
 
