@@ -149,6 +149,8 @@ services:
     entrypoint: ["/relay"]
     environment:
       LOG_LEVEL: ${LOG_LEVEL:?set LOG_LEVEL in .env}
+      # Scraped by Prometheus inside the network; not published.
+      METRICS_ADDR: ":9091"
       DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?sslmode=disable
       DB_IDLE_IN_TX_TIMEOUT: ${DB_IDLE_IN_TX_TIMEOUT:?set DB_IDLE_IN_TX_TIMEOUT in .env}
       # In-network listener; .env's KAFKA_BROKERS is the host one.
@@ -198,6 +200,7 @@ services:
     entrypoint: ["/settler"]
     environment:
       LOG_LEVEL: ${LOG_LEVEL:?set LOG_LEVEL in .env}
+      METRICS_ADDR: ":9091"
       DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?sslmode=disable
       DB_IDLE_IN_TX_TIMEOUT: ${DB_IDLE_IN_TX_TIMEOUT:?set DB_IDLE_IN_TX_TIMEOUT in .env}
       KAFKA_BROKERS: redpanda:9092

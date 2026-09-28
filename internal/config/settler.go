@@ -11,6 +11,7 @@ import (
 // (cmd/settler, docs/decisions/024).
 type SettlerConfig struct {
 	LogLevel          slog.Level
+	MetricsAddr       string // METRICS_ADDR: Prometheus /metrics listener
 	DatabaseURL       string
 	DBIdleInTxTimeout time.Duration
 	KafkaBrokers      []string
@@ -53,6 +54,7 @@ func LoadSettler(lookup LookupFunc) (SettlerConfig, error) {
 		key string
 		dst *string
 	}{
+		{"METRICS_ADDR", &cfg.MetricsAddr},
 		{"DATABASE_URL", &cfg.DatabaseURL},
 		{"OUTBOX_TOPIC", &cfg.OutboxTopic},
 		{"SETTLEMENT_GROUP", &cfg.SettlementGroup},

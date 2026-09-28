@@ -18,6 +18,7 @@ import (
 	"github.com/AryanSingh103/auction-engine/internal/breaker"
 	"github.com/AryanSingh103/auction-engine/internal/config"
 	"github.com/AryanSingh103/auction-engine/internal/kafkaclient"
+	"github.com/AryanSingh103/auction-engine/internal/metrics"
 	"github.com/AryanSingh103/auction-engine/internal/postgres"
 	"github.com/AryanSingh103/auction-engine/internal/settlement"
 )
@@ -30,6 +31,8 @@ const (
 	commitTimeout = 5 * time.Second
 	// How often to retry creating the dead-letter topic at startup.
 	topicRetryInterval = time.Second
+	// Bounds a metrics scrape and the metrics server's shutdown.
+	metricsTimeout = 5 * time.Second
 )
 
 func main() {
@@ -58,6 +61,14 @@ func run() error {
 		return err
 	}
 	defer pool.Close()
+
+	reg := metrics.NewWorkerRegistry()
+	settlerMetrics := metrics.NewSettler(reg, pool)
+	stopMetrics, err := metrics.StartServer(ctx, cfg.MetricsAddr, reg.Handler(), metricsTimeout)
+	if err != nil {
+		return err
+	}
+	defer stopMetrics()
 
 	client, err := kafkaclient.New(cfg.KafkaBrokers,
 		kgo.ConsumerGroup(cfg.SettlementGroup),
@@ -88,9 +99,10 @@ func run() error {
 
 	b := breaker.New(int(cfg.BreakerFailureThreshold), cfg.BreakerOpenDuration, time.Now, func(from, to breaker.State) {
 		logger.Warn("payment circuit breaker changed state", slog.String("from", from.String()), slog.String("to", to.String()))
+		settlerMetrics.BreakerChanged(from, to)
 	})
 	settler := settlement.NewSettler(pool, settlement.NewPaymentClient(cfg.PaysimURL, cfg.PaymentTimeout), b,
-		int(cfg.PaymentMaxAttempts), cfg.PaymentBackoffBase, cfg.PaymentBackoffCap, nil)
+		int(cfg.PaymentMaxAttempts), cfg.PaymentBackoffBase, cfg.PaymentBackoffCap, settlerMetrics)
 	consumer := settlement.NewConsumer(client, settler, cfg.SettlementDLQTopic, cfg.SettlementRetryInterval, logger)
 
 	logger.Info("settler started", slog.String("topic", cfg.OutboxTopic), slog.String("group", cfg.SettlementGroup))

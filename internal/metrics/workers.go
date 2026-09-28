@@ -2,6 +2,8 @@ package metrics
 
 import (
 	"context"
+	"fmt"
+	"net"
 	"net/http"
 	"time"
 
@@ -32,6 +34,24 @@ func NewWorkerRegistry() WorkerRegistry {
 // Handler serves the registry's metrics.
 func (r WorkerRegistry) Handler() http.Handler {
 	return promhttp.HandlerFor(r.Registry, promhttp.HandlerOpts{})
+}
+
+// StartServer serves h on addr in the background. It binds before
+// returning, so a busy port fails startup instead of being logged later.
+// stop shuts the server down, waiting at most timeout for scrapes in flight.
+func StartServer(ctx context.Context, addr string, h http.Handler, timeout time.Duration) (stop func(), err error) {
+	var lc net.ListenConfig
+	ln, err := lc.Listen(ctx, "tcp", addr)
+	if err != nil {
+		return nil, fmt.Errorf("listen on %q: %w", addr, err)
+	}
+	srv := &http.Server{Handler: h, ReadHeaderTimeout: timeout, WriteTimeout: timeout}
+	go func() { _ = srv.Serve(ln) }()
+	return func() {
+		ctx, cancel := context.WithTimeout(context.Background(), timeout)
+		defer cancel()
+		_ = srv.Shutdown(ctx)
+	}, nil
 }
 
 // Relay implements outbox.Observer.

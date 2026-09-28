@@ -10,6 +10,7 @@ import (
 
 func validRelayEnv() map[string]string {
 	return map[string]string{
+		"METRICS_ADDR":             ":9092",
 		"LOG_LEVEL":                "info",
 		"DATABASE_URL":             "postgres://app@db:5432/app",
 		"DB_IDLE_IN_TX_TIMEOUT":    "5s",
@@ -29,7 +30,7 @@ func TestLoadRelay(t *testing.T) {
 		t.Fatalf("LoadRelay() unexpected error: %v", err)
 	}
 	want := RelayConfig{
-		LogLevel: slog.LevelInfo, DatabaseURL: "postgres://app@db:5432/app", DBIdleInTxTimeout: 5 * time.Second,
+		LogLevel: slog.LevelInfo, MetricsAddr: ":9092", DatabaseURL: "postgres://app@db:5432/app", DBIdleInTxTimeout: 5 * time.Second,
 		KafkaBrokers: []string{"k1:9092", "k2:9092"}, OutboxTopic: "auction-events", OutboxTopicPartitions: 6,
 		KafkaReplicationFactor: 1, RelayBatchSize: 100, RelayPollInterval: 100 * time.Millisecond,
 		RelayPublishTimeout: 3 * time.Second,

@@ -8,3 +8,13 @@ scrape_configs:
   - job_name: api
     static_configs:
       - targets: ["api:9091", "api2:9091"]
+
+  # Background workers (M4). Their metrics listeners are also :9091 inside
+  # their own containers.
+  - job_name: relay
+    static_configs:
+      - targets: ["relay:9091", "relay2:9091"]
+
+  - job_name: settler
+    static_configs:
+      - targets: ["settler:9091", "settler2:9091"]

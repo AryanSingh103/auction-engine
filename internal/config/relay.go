@@ -13,6 +13,7 @@ import (
 // docs/decisions/022).
 type RelayConfig struct {
 	LogLevel    slog.Level
+	MetricsAddr string // METRICS_ADDR: Prometheus /metrics listener
 	DatabaseURL string
 	// DBIdleInTxTimeout also bounds a stuck publish: the relay holds its
 	// transaction open while Kafka acknowledges.
@@ -49,6 +50,7 @@ func LoadRelay(lookup LookupFunc) (RelayConfig, error) {
 		key string
 		dst *string
 	}{
+		{"METRICS_ADDR", &cfg.MetricsAddr},
 		{"DATABASE_URL", &cfg.DatabaseURL},
 		{"OUTBOX_TOPIC", &cfg.OutboxTopic},
 	} {

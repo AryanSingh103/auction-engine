@@ -10,6 +10,7 @@ import (
 
 func validSettlerEnv() map[string]string {
 	return map[string]string{
+		"METRICS_ADDR":              ":9092",
 		"LOG_LEVEL":                 "info",
 		"DATABASE_URL":              "postgres://app@db:5432/app",
 		"DB_IDLE_IN_TX_TIMEOUT":     "5s",
@@ -35,7 +36,7 @@ func TestLoadSettler(t *testing.T) {
 		t.Fatalf("LoadSettler() unexpected error: %v", err)
 	}
 	want := SettlerConfig{
-		LogLevel: slog.LevelInfo, DatabaseURL: "postgres://app@db:5432/app", DBIdleInTxTimeout: 5 * time.Second,
+		LogLevel: slog.LevelInfo, MetricsAddr: ":9092", DatabaseURL: "postgres://app@db:5432/app", DBIdleInTxTimeout: 5 * time.Second,
 		KafkaBrokers: []string{"k1:9092"}, OutboxTopic: "auction-events", SettlementGroup: "settlement",
 		SettlementDLQTopic: "settlement-dlq", KafkaReplicationFactor: 1, SettlementRetryInterval: time.Second,
 		PaysimURL: "http://paysim:8090", PaymentTimeout: 2 * time.Second, PaymentMaxAttempts: 6,

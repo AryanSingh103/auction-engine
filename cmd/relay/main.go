@@ -17,6 +17,7 @@ import (
 
 	"github.com/AryanSingh103/auction-engine/internal/config"
 	"github.com/AryanSingh103/auction-engine/internal/kafkaclient"
+	"github.com/AryanSingh103/auction-engine/internal/metrics"
 	"github.com/AryanSingh103/auction-engine/internal/outbox"
 	"github.com/AryanSingh103/auction-engine/internal/postgres"
 )
@@ -27,6 +28,9 @@ const dbMaxConns = 2
 
 // How often to retry creating the topic while the broker is unreachable.
 const topicRetryInterval = time.Second
+
+// Bounds a metrics scrape and the metrics server's shutdown.
+const metricsTimeout = 5 * time.Second
 
 func main() {
 	if err := run(); err != nil {
@@ -58,6 +62,14 @@ func run() error {
 	}
 	defer pool.Close()
 
+	reg := metrics.NewWorkerRegistry()
+	relayMetrics := metrics.NewRelay(reg, pool)
+	stopMetrics, err := metrics.StartServer(ctx, cfg.MetricsAddr, reg.Handler(), metricsTimeout)
+	if err != nil {
+		return err
+	}
+	defer stopMetrics()
+
 	// A record that has not been sent within the publish timeout is failed;
 	// one already sent can only finish or fail with its connection (see
 	// outbox.KafkaPublisher).
@@ -84,7 +96,7 @@ func run() error {
 	logger.Info("relay started",
 		slog.String("topic", cfg.OutboxTopic),
 		slog.Int("batch_size", int(cfg.RelayBatchSize)))
-	relay := outbox.NewRelay(pool, outbox.NewKafkaPublisher(client, cfg.OutboxTopic), int(cfg.RelayBatchSize), cfg.RelayPublishTimeout, nil)
+	relay := outbox.NewRelay(pool, outbox.NewKafkaPublisher(client, cfg.OutboxTopic), int(cfg.RelayBatchSize), cfg.RelayPublishTimeout, relayMetrics)
 	relay.Run(ctx, cfg.RelayPollInterval, logger)
 	logger.Info("relay stopped")
 	return nil
