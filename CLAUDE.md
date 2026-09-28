@@ -25,15 +25,15 @@ Module path: `github.com/AryanSingh103/auction-engine`
 
 ## Working agreement
 
-Updated 2026-09-24. This replaces rules 2 and 4 of the brief.
+Updated 2026-09-28. This replaces rules 2 and 4 of the brief.
 
-1. **Small slices, one commit per logical change.** Claude commits **and pushes** after every individual logical change, with a short, specific message (e.g. `add auctions table migration`). Three separate things are three commits, never one batch. Claude does not hand git commands to the owner.
+1. **Small slices, one commit per component.** Since 2026-09-28, to save usage, Claude commits **and pushes** once per finished component (each commit green), with a short, specific message (e.g. `add auctions table migration`). Three separate things are three commits, never one batch. Claude does not hand git commands to the owner.
 2. **Run each milestone straight through.** Claude does not stop between components for approval. It stops and asks only for:
    - a real decision that belongs to the owner
    - anything needing the owner's password or a browser
    - anything that costs money, such as creating AWS resources
 3. **Explain every design decision,** including what was rejected and why. For example, if choosing pessimistic locking, explain what optimistic locking would have done differently and when it would be the better choice.
-4. **Never leave code the owner can't explain.** There is no per-component quiz. The end-of-milestone interview-questions subagent (below) is the knowledge check.
+4. **Never leave code the owner can't explain.** There is no per-component quiz and, since 2026-09-28, no interview-questions subagent: the owner removed it to save usage.
 5. **Don't scaffold ahead.** Add files only when they become necessary.
 6. **If something asked for is a bad idea, say so directly.**
 7. **Record every significant decision** in `docs/decisions/NNN-short-title.md`, covering context, decision, alternatives considered, and consequences. Keep each under 200 words.
@@ -70,7 +70,6 @@ Enforce these with database constraints and explicit mechanisms, not hopeful app
 
 At the end of each milestone:
 - An **adversarial-review subagent** reviews the work as a skeptical senior backend engineer. It hunts for race conditions, concurrency bugs, missing error handling, unhandled failure modes, resource leaks, and any path that violates an invariant, and it tries to construct a specific breaking interleaving. It reports findings ranked by severity. Don't defend the code: fix what is real (each fix its own commit), and report what was dismissed and why.
-- An **interview-questions subagent** reads the milestone's diff and writes 5 senior-level questions. Save them, **without answers**, to `docs/interview/mN-questions.md` and commit them. Never skip this. The owner answers whenever they choose, and unanswered questions **do not block** the next milestone. When answers arrive, grade them and say where they were wrong or vague.
 
 A milestone is done only when all of these hold:
 - All tests pass, and `go test -race ./...` is clean.
@@ -153,7 +152,7 @@ CI (`.github/workflows/ci.yml`) runs lint, `make fmt-check vet test-race` and an
   - `internal/httpapi/shed.go`: bid load shedding (ADR 025).
   - `internal/metrics/workers.go`: the relay's and settler's metrics.
 - `internal/testdb/`: testcontainers harness. One container per test binary, and a fresh database cloned from a migrated template per test.
-- `docs/decisions/`: ADRs, numbered `NNN-short-title.md`. `docs/open-questions.md`: spec gaps and risks R1–R18. `docs/interview/`: per-milestone interview questions.
+- `docs/decisions/`: ADRs, numbered `NNN-short-title.md`. `docs/open-questions.md`: spec gaps and risks R1–R18. `docs/interview/`: interview questions for M0–M4 (no longer generated).
 
 Database error codes: the guard trigger raises `AE001`–`AE006` and the deferred outbox check raises `AE007`. `internal/auction` maps them to domain errors wrapped with `ErrRejectedByDatabaseGuard`. Only one case is expected in correct operation: `ErrAuctionEnded` when `end_at` falls between the Go and trigger clock reads (`IsExpectedGuardRejection`). Any other guard rejection means the Go rules missed something. The hardening migrations add `AE008` (bids append-only), `AE009` (outbox append-only except marking published), `AE010` (status only open→closed) and `AE011` (head only advances one link). M4 adds:
 - `AE012`: no close before `end_at`
