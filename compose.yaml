@@ -141,6 +141,35 @@ services:
     ports:
       - "127.0.0.1:${APP_HOST_PORT:?set APP_HOST_PORT in .env}:8080"
 
+  # Outbox relay (docs/decisions/022). Two copies, so the standby path is
+  # always exercised locally: one publishes, the other waits for the lock.
+  relay: &relay
+    build: .
+    entrypoint: ["/relay"]
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:?set LOG_LEVEL in .env}
+      DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?sslmode=disable
+      DB_IDLE_IN_TX_TIMEOUT: ${DB_IDLE_IN_TX_TIMEOUT:?set DB_IDLE_IN_TX_TIMEOUT in .env}
+      # In-network listener; .env's KAFKA_BROKERS is the host one.
+      KAFKA_BROKERS: redpanda:9092
+      OUTBOX_TOPIC: ${OUTBOX_TOPIC:?set OUTBOX_TOPIC in .env}
+      OUTBOX_TOPIC_PARTITIONS: ${OUTBOX_TOPIC_PARTITIONS:?set OUTBOX_TOPIC_PARTITIONS in .env}
+      KAFKA_REPLICATION_FACTOR: ${KAFKA_REPLICATION_FACTOR:?set KAFKA_REPLICATION_FACTOR in .env}
+      RELAY_BATCH_SIZE: ${RELAY_BATCH_SIZE:?set RELAY_BATCH_SIZE in .env}
+      RELAY_POLL_INTERVAL: ${RELAY_POLL_INTERVAL:?set RELAY_POLL_INTERVAL in .env}
+      RELAY_PUBLISH_TIMEOUT: ${RELAY_PUBLISH_TIMEOUT:?set RELAY_PUBLISH_TIMEOUT in .env}
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redpanda:
+        condition: service_healthy
+
+  relay2:
+    <<: *relay
+
   # A second API instance, so cross-instance behavior (Redis pub/sub
   # fan-out, the shared rate-limit buckets, the shared cache) is exercised
   # locally. Same configuration; only the host port differs. In M6 both sit
