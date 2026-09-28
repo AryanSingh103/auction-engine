@@ -15,7 +15,7 @@ Charge each closed auction's winner exactly once (invariant 5), from an at-least
 - Database errors retry the event.
 
 ## Alternatives
-- **Marking `failed` after the retries run out:** would lie when a charge exists.
+- **`failed` after the retries:** would lie when a charge exists.
 - **Event-id keys:** a republish would charge twice.
 
 ## Consequences
