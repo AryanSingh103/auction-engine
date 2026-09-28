@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -485,6 +486,38 @@ func TestOutboxConstraints(t *testing.T) {
 
 	_, err = f.pool.Exec(ctx, `INSERT INTO outbox (auction_id, event_type, payload, bid_id) VALUES ($1, 'bid_placed', '{}', $2)`, f.auction, bid)
 	wantPgError(t, err, "23505", "outbox_bid_id_key")
+}
+
+// The relay's poll must be able to use the partial index. Tables in tests
+// are tiny, so the planner would pick a sequential scan anyway; disabling
+// that shows whether the index is usable at all, i.e. whether its
+// predicate matches the query's WHERE clause.
+func TestOutboxRelayQueryUsesPartialIndex(t *testing.T) {
+	f := newFixture(t)
+	ctx := t.Context()
+	err := pgx.BeginFunc(ctx, f.pool, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, `SET LOCAL enable_seqscan = off`); err != nil {
+			return err
+		}
+		// EXPLAIN returns one row per plan line.
+		rows, err := tx.Query(ctx, `EXPLAIN (FORMAT TEXT)
+			SELECT id FROM outbox WHERE published_at IS NULL ORDER BY id LIMIT 100`)
+		if err != nil {
+			return err
+		}
+		lines, err := pgx.CollectRows(rows, pgx.RowTo[string])
+		if err != nil {
+			return err
+		}
+		plan := strings.Join(lines, "\n")
+		if !strings.Contains(plan, "outbox_unpublished") {
+			t.Errorf("relay query plan does not use outbox_unpublished:\n%s", plan)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("explain: %v", err)
+	}
 }
 
 // created_at must be the moment the bid was inserted, not the start of its
