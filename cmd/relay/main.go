@@ -73,7 +73,20 @@ func run() error {
 	// A record that has not been sent within the publish timeout is failed;
 	// one already sent can only finish or fail with its connection (see
 	// outbox.KafkaPublisher).
-	client, err := kafkaclient.New(cfg.KafkaBrokers, kgo.RecordDeliveryTimeout(cfg.RelayPublishTimeout))
+	// franz-go's defaults let one in-flight produce last ~20s (10s produce
+	// timeout plus 10s overhead), far past DB_IDLE_IN_TX_TIMEOUT: Postgres
+	// would end this relay's transaction, another relay would take over,
+	// and this one could still land an old duplicate after newer events.
+	// Bounding both to a third of the publish timeout keeps a stalled
+	// attempt inside it. It shrinks that window but cannot close it (a sent
+	// batch is never failed early, see outbox.KafkaPublisher), which is why
+	// consumers drop event ids they have already passed (ADR 022; found by
+	// the M4 review).
+	client, err := kafkaclient.New(cfg.KafkaBrokers,
+		kgo.RecordDeliveryTimeout(cfg.RelayPublishTimeout),
+		kgo.ProduceRequestTimeout(cfg.RelayPublishTimeout/3),
+		kgo.RequestTimeoutOverhead(cfg.RelayPublishTimeout/3),
+	)
 	if err != nil {
 		return err
 	}

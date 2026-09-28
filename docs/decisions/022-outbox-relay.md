@@ -4,10 +4,10 @@
 Outbox events must reach Kafka at least once, each auction's in order (R2). The brief's `SKIP LOCKED` pollers can publish one auction's events out of order.
 
 ## Decision
-- Each batch is one transaction: `pg_try_advisory_xact_lock`, read the oldest unpublished rows in id order, produce and wait for acks, mark them published, commit. Any number of relays can run, but only one batch runs at a time.
+- Each batch is one transaction: `pg_try_advisory_xact_lock`, read unpublished rows in id order, produce, await acks, mark, commit. Any number of relays; one batch at a time.
 - An auction's events are inserted under its row lock, so their ids follow commit order.
-- The client is franz-go (maintained, idempotent producer by default). Records are keyed by auction id, and the value carries the event id so consumers can deduplicate.
-- Tests: 4 relays with concurrent bids deliver every event exactly once, in order. With the lock removed, 5 of 5 runs publish duplicates.
+- franz-go (maintained, idempotent by default). Keyed by auction id; the value carries the event id.
+- Tested: 4 relays deliver every event once, in order; without the lock, 5 of 5 runs duplicate.
 
 ## Alternatives
 - **A session lock:** a zombie holder keeps publishing after its connection dies.
@@ -15,4 +15,4 @@ Outbox events must reach Kafka at least once, each auction's in order (R2). The 
 - **Kafka transactions:** they do not cover Postgres.
 
 ## Consequences
-A crash between the acknowledgement and the commit republishes the batch, so consumers must be idempotent.
+At least once, and a duplicate can land after newer events (a relay whose session Postgres ended may still retry a sent batch). Consumers must be idempotent and drop ids at or below the last applied for that auction.
