@@ -6,9 +6,11 @@ import (
 	"fmt"
 	"math/rand/v2"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/AryanSingh103/auction-engine/internal/breaker"
@@ -132,7 +134,7 @@ func (s *Settler) ensureInvoice(ctx context.Context, auctionID int64) (invoice, 
 		FROM auctions
 		WHERE id = $1 AND status = 'closed' AND current_bid_id IS NOT NULL
 		ON CONFLICT (auction_id) DO NOTHING`, auctionID); err != nil {
-		return invoice{}, false, fmt.Errorf("create invoice: %w", err)
+		return invoice{}, false, fmt.Errorf("create invoice: %w", permanentIfRefused(err))
 	}
 	var inv invoice
 	err := s.pool.QueryRow(ctx, `SELECT id, winner_id, amount, status FROM invoices WHERE auction_id = $1`, auctionID).
@@ -215,12 +217,25 @@ func (s *Settler) backoff(attempt int) time.Duration {
 	return rand.N(ceiling) + 1 //nolint:gosec // jitter spreads retries; it needs no unpredictability
 }
 
+// permanentIfRefused marks a database error as ErrRejected when retrying
+// cannot help: an integrity violation (SQLSTATE class 23) or one of the
+// schema's own guards (AE...). Retrying those forever would block the
+// partition with nothing in the dead-letter topic (found by the M4
+// review). Anything else (a lost connection, a timeout) stays transient.
+func permanentIfRefused(err error) error {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && (strings.HasPrefix(pgErr.Code, "23") || strings.HasPrefix(pgErr.Code, "AE")) {
+		return fmt.Errorf("%w: %w", ErrRejected, err)
+	}
+	return err
+}
+
 func (s *Settler) markPaid(ctx context.Context, id int64, chargeID string) error {
 	tag, err := s.pool.Exec(ctx, `
 		UPDATE invoices SET status = 'paid', payment_id = $2, settled_at = clock_timestamp()
 		WHERE id = $1 AND status = 'pending'`, id, chargeID)
 	if err != nil {
-		return fmt.Errorf("mark invoice %d paid: %w", id, err)
+		return fmt.Errorf("mark invoice %d paid: %w", id, permanentIfRefused(err))
 	}
 	if tag.RowsAffected() == 0 {
 		// Another settler got there first. Same key, same charge: it must
@@ -231,7 +246,7 @@ func (s *Settler) markPaid(ctx context.Context, id int64, chargeID string) error
 			return fmt.Errorf("re-read invoice %d: %w", id, err)
 		}
 		if status != "paid" || recorded == nil || *recorded != chargeID {
-			return fmt.Errorf("invoice %d is %s with payment %v, but provider charged %s", id, status, recorded, chargeID)
+			return fmt.Errorf("%w: invoice %d is %s with payment %v, but provider charged %s", ErrRejected, id, status, recorded, chargeID)
 		}
 	}
 	return nil
@@ -242,7 +257,7 @@ func (s *Settler) markDeclined(ctx context.Context, id int64) error {
 		UPDATE invoices SET status = 'failed', failure = 'declined by payment provider', settled_at = clock_timestamp()
 		WHERE id = $1 AND status = 'pending'`, id)
 	if err != nil {
-		return fmt.Errorf("mark invoice %d failed: %w", id, err)
+		return fmt.Errorf("mark invoice %d failed: %w", id, permanentIfRefused(err))
 	}
 	if tag.RowsAffected() == 0 {
 		// The provider replays a key's result, so another settler must
@@ -252,7 +267,7 @@ func (s *Settler) markDeclined(ctx context.Context, id int64) error {
 			return fmt.Errorf("re-read invoice %d: %w", id, err)
 		}
 		if status != "failed" {
-			return fmt.Errorf("invoice %d is %s, but the provider declined it", id, status)
+			return fmt.Errorf("%w: invoice %d is %s, but the provider declined it", ErrRejected, id, status)
 		}
 	}
 	return nil

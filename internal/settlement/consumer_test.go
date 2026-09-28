@@ -2,6 +2,7 @@ package settlement_test
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -180,5 +181,35 @@ func TestPipelineDeadLettersPoisonMessages(t *testing.T) {
 	dead := kafka.ReadAll(t, p.dlq, 1, 20*time.Second)
 	if len(dead) != 1 || string(dead[0].Value) != "not json" {
 		t.Fatalf("dead letters = %v, want the poison message", dead)
+	}
+}
+
+// A database refusal that retrying cannot fix (here a guard rejecting the
+// invoice) is dead-lettered, not retried forever: the partition keeps
+// moving, and a later event on it is still settled.
+func TestPipelineDeadLettersDatabaseRefusals(t *testing.T) {
+	pool := db.NewDB(t, 20)
+	refused := closedAuction(t, pool, 1100)
+	if _, err := pool.Exec(t.Context(), fmt.Sprintf(`
+		CREATE FUNCTION refuse_invoice() RETURNS trigger LANGUAGE plpgsql AS $$
+		BEGIN
+			IF NEW.auction_id = %d THEN
+				RAISE EXCEPTION 'injected refusal' USING ERRCODE = 'AE015';
+			END IF;
+			RETURN NEW;
+		END $$;
+		CREATE TRIGGER refuse_invoice BEFORE INSERT ON invoices FOR EACH ROW EXECUTE FUNCTION refuse_invoice();`, refused)); err != nil {
+		t.Fatalf("install refusal: %v", err)
+	}
+	later := closedAuction(t, pool, 2200)
+	p := startPipeline(t, pool, newSettler(pool, provider(t, pool, 0), 3))
+
+	dead := kafka.ReadAll(t, p.dlq, 1, 20*time.Second)
+	if len(dead) != 1 {
+		t.Fatalf("%d dead-lettered events, want 1", len(dead))
+	}
+	waitFor(t, "the later auction to be paid", func() bool { return books(t, pool, later).status == "paid" })
+	if l := books(t, pool, refused); l.invoices != 0 || l.charges != 0 {
+		t.Errorf("refused auction: books = %+v, want nothing", l)
 	}
 }
