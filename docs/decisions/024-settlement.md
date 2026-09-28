@@ -1,7 +1,7 @@
 # 024. Settlement: idempotent per invoice, pending until the provider is definite
 
 ## Context
-Every closed auction's winner must be charged exactly once (invariant 5), from an at-least-once event stream and through a provider that fails, loses responses and hangs (ADR 023).
+Charge each closed auction's winner exactly once (invariant 5), from an at-least-once stream, through a provider that fails, loses responses and hangs (ADR 023).
 
 ## Decision
 - **One consumer group** handles `auction_closed` events in partition order, and marks each offset only after handling it.
@@ -16,7 +16,7 @@ Every closed auction's winner must be charged exactly once (invariant 5), from a
 
 ## Alternatives
 - **Marking `failed` after the retries run out:** would lie when a charge exists.
-- **Keying on the event id:** a republished event would charge twice.
+- **Event-id keys:** a republish would charge twice.
 
 ## Consequences
-One slow invoice blocks its partition. The key test is to randomize the key, which 6 tests catch.
+One slow invoice blocks its partition. Randomizing the key fails 6 tests.
