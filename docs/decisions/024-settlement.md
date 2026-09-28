@@ -12,7 +12,7 @@ Charge each closed auction's winner exactly once (invariant 5), from an at-least
   - `failed`: only after a 402, where no charge exists
   - `pending`: an unknown outcome, never marked failed, because a lost response may have charged; after the retries it is dead-lettered for replay
 - **Full-jitter backoff, and a circuit breaker on unknown outcomes only.** While the breaker is open, settlement pauses; it does not dead-letter everything.
-- Database errors retry the event, blocking its partition.
+- Database errors retry the event.
 
 ## Alternatives
 - **Marking `failed` after the retries run out:** would lie when a charge exists.
