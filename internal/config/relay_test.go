@@ -46,6 +46,7 @@ func TestLoadRelayRejects(t *testing.T) {
 		{"missing brokers", "KAFKA_BROKERS", "", "KAFKA_BROKERS: required"},
 		{"empty broker entry", "KAFKA_BROKERS", "k1:9092,,k2:9092", "KAFKA_BROKERS: empty entry"},
 		{"zero batch", "RELAY_BATCH_SIZE", "0", "RELAY_BATCH_SIZE"},
+		{"replication beyond int16", "KAFKA_REPLICATION_FACTOR", "40000", "KAFKA_REPLICATION_FACTOR: 40000 is above 32767"},
 		{"publish timeout not below idle-in-tx", "RELAY_PUBLISH_TIMEOUT", "5s", "RELAY_PUBLISH_TIMEOUT (5s) must be less than DB_IDLE_IN_TX_TIMEOUT (5s)"},
 	}
 	for _, tt := range tests {

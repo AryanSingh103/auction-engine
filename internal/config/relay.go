@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"strings"
 	"time"
 )
@@ -23,7 +24,7 @@ type RelayConfig struct {
 	// if it does not exist; an existing topic is left as it is.
 	OutboxTopic            string
 	OutboxTopicPartitions  int32
-	KafkaReplicationFactor int32
+	KafkaReplicationFactor int16
 	// RelayBatchSize is the most events published per transaction.
 	RelayBatchSize int32
 	// RelayPollInterval is the wait after a batch that was not full.
@@ -67,7 +68,6 @@ func LoadRelay(lookup LookupFunc) (RelayConfig, error) {
 		dst *int32
 	}{
 		{"OUTBOX_TOPIC_PARTITIONS", &cfg.OutboxTopicPartitions},
-		{"KAFKA_REPLICATION_FACTOR", &cfg.KafkaReplicationFactor},
 		{"RELAY_BATCH_SIZE", &cfg.RelayBatchSize},
 	} {
 		if v, err := positiveInt32(lookup, n.key); err != nil {
@@ -75,6 +75,14 @@ func LoadRelay(lookup LookupFunc) (RelayConfig, error) {
 		} else {
 			*n.dst = v
 		}
+	}
+	// Kafka's wire type for the replication factor is int16.
+	if v, err := positiveInt32(lookup, "KAFKA_REPLICATION_FACTOR"); err != nil {
+		errs = append(errs, err)
+	} else if v > math.MaxInt16 {
+		errs = append(errs, fmt.Errorf("KAFKA_REPLICATION_FACTOR: %d is above %d", v, math.MaxInt16))
+	} else {
+		cfg.KafkaReplicationFactor = int16(v)
 	}
 	durationsOK := true
 	for _, d := range []struct {
