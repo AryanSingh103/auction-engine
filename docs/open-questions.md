@@ -18,7 +18,7 @@ Keying Kafka messages by `auction_id` only preserves order if events are *produc
 A payment call that times out has an unknown outcome. If we retry blindly, we can charge twice. Settlement idempotency on our side is necessary but not sufficient. The fake payment service must accept an idempotency key and return the original result on a repeat, as Stripe does. The plan is to use the invoice id as that key.
 
 ## R4. Load shedding keyed on consumer lag (M4): questionable spec
-**Decided by the owner (2026-09-27), replacing the brief's rule:** bids are shed on API-local saturation, not on consumer lag. Consumer lag only throttles the outbox publisher and raises alerts. The mechanism and thresholds will be recorded in an ADR when they are built in M4.
+**Decided by the owner (2026-09-27), replacing the brief's rule:** bids are shed on API-local saturation, not on consumer lag. **Built in M4 (ADR 025).** The lag-based relay throttle that was part of the chosen option was not built; ADR 025 explains why. **Waiting for the owner's OK.**
 
 The brief sheds load when Kafka consumer lag passes a threshold. Bids don't depend on settlement, so rejecting bids because settlement is behind couples two unrelated paths. Proposal:
 - shed on API-local saturation (requests in flight, DB pool wait time)
