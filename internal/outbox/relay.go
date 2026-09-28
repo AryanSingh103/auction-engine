@@ -131,20 +131,19 @@ func (r *Relay) PublishBatch(ctx context.Context) (published int, held bool, err
 // Run publishes until ctx is cancelled. After a full batch it goes again
 // at once; otherwise, including after an error, it waits interval. An
 // event is never skipped: a failed batch is retried from the same row.
+//
+// With several relays running there is no stable leader: the lock is per
+// batch, so whichever relay polls first runs the next one. That is by
+// design (a dead relay needs no failover), so it is not logged.
 func (r *Relay) Run(ctx context.Context, interval time.Duration, logger *slog.Logger) {
-	active := false
 	for {
-		n, held, err := r.PublishBatch(ctx)
-		switch {
-		case ctx.Err() != nil:
+		n, _, err := r.PublishBatch(ctx)
+		if ctx.Err() != nil {
 			return
-		case err != nil:
-			logger.Error("outbox batch failed; will retry", slog.Any("error", err))
-		case held != active:
-			active = held
-			logger.Info("outbox relay role changed", slog.Bool("active", active))
 		}
-		if err == nil && n == r.batchSize {
+		if err != nil {
+			logger.Error("outbox batch failed; will retry", slog.Any("error", err))
+		} else if n == r.batchSize {
 			continue
 		}
 		select {
