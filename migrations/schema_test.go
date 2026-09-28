@@ -93,6 +93,18 @@ func (f *fixture) placeBid(ctx context.Context, auction, user, amount int64, pre
 	return id, err
 }
 
+// closeAuction does what a correct close does, in one transaction: set
+// the status and write the auction_closed event.
+func (f *fixture) closeAuction(ctx context.Context, auction int64) error {
+	return pgx.BeginFunc(ctx, f.pool, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, `UPDATE auctions SET status = 'closed' WHERE id = $1`, auction); err != nil {
+			return err
+		}
+		_, err := tx.Exec(ctx, `INSERT INTO outbox (auction_id, event_type, payload) VALUES ($1, 'auction_closed', '{}')`, auction)
+		return err
+	})
+}
+
 func mustScan(t *testing.T, row pgx.Row, dst ...any) {
 	t.Helper()
 	if err := row.Scan(dst...); err != nil {
@@ -202,12 +214,58 @@ func TestAuctionUpdateGuard(t *testing.T) {
 	_, err = f.pool.Exec(ctx, `UPDATE auctions SET current_bid_id = NULL, current_leader_id = NULL, current_price = NULL WHERE id = $1`, f.auction)
 	wantPgError(t, err, "AE011", "")
 
-	// open -> closed is allowed; closed -> open never is.
-	if _, err := f.pool.Exec(ctx, `UPDATE auctions SET status = 'closed' WHERE id = $1`, f.auction); err != nil {
+	// open -> closed is allowed (once ended, with its event: see
+	// TestAuctionClose); closed -> open never is.
+	ended := f.newAuction(t, "clock_timestamp() - interval '2 hours'", "clock_timestamp() - interval '1 hour'")
+	if err := f.closeAuction(ctx, ended); err != nil {
 		t.Fatalf("close auction: %v", err)
 	}
-	_, err = f.pool.Exec(ctx, `UPDATE auctions SET status = 'open' WHERE id = $1`, f.auction)
+	_, err = f.pool.Exec(ctx, `UPDATE auctions SET status = 'open' WHERE id = $1`, ended)
 	wantPgError(t, err, "AE010", "")
+}
+
+func TestAuctionClose(t *testing.T) {
+	f := newFixture(t)
+	ctx := t.Context()
+	ended := func() int64 {
+		return f.newAuction(t, "clock_timestamp() - interval '2 hours'", "clock_timestamp() - interval '1 hour'")
+	}
+
+	// Not before end_at (f.auction ends in an hour).
+	err := f.closeAuction(ctx, f.auction)
+	wantPgError(t, err, "AE012", "")
+
+	// Not without the event: the status change alone fails at COMMIT.
+	a := ended()
+	_, err = f.pool.Exec(ctx, `UPDATE auctions SET status = 'closed' WHERE id = $1`, a)
+	wantPgError(t, err, "AE013", "")
+
+	// No close event for an auction that is still open.
+	_, err = f.pool.Exec(ctx, `INSERT INTO outbox (auction_id, event_type, payload) VALUES ($1, 'auction_closed', '{}')`, a)
+	wantPgError(t, err, "AE014", "")
+
+	// A correct close works, and a second close event is refused.
+	if err := f.closeAuction(ctx, a); err != nil {
+		t.Fatalf("close ended auction: %v", err)
+	}
+	_, err = f.pool.Exec(ctx, `INSERT INTO outbox (auction_id, event_type, payload) VALUES ($1, 'auction_closed', '{}')`, a)
+	wantPgError(t, err, "23505", "outbox_one_close_per_auction")
+
+	// Close events carry no bid.
+	b := ended()
+	err = pgx.BeginFunc(ctx, f.pool, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, `UPDATE auctions SET status = 'closed' WHERE id = $1`, b); err != nil {
+			return err
+		}
+		_, err := tx.Exec(ctx, `INSERT INTO outbox (auction_id, event_type, payload, bid_id) VALUES ($1, 'auction_closed', '{}', $2)`,
+			b, 1)
+		return err
+	})
+	wantPgError(t, err, "23514", "outbox_bid_event_has_bid")
+
+	// Unknown event types are still refused.
+	_, err = f.pool.Exec(ctx, `INSERT INTO outbox (auction_id, event_type, payload) VALUES ($1, 'auction_reopened', '{}')`, a)
+	wantPgError(t, err, "23514", "outbox_event_type_check")
 }
 
 func TestBidsAreAppendOnly(t *testing.T) {
@@ -356,7 +414,9 @@ func TestBidGuardTimeWindowAndStatus(t *testing.T) {
 	}{
 		{"not started", "clock_timestamp() + interval '1 hour'", "clock_timestamp() + interval '2 hours'", false, "AE002"},
 		{"ended", "clock_timestamp() - interval '2 hours'", "clock_timestamp() - interval '1 hour'", false, "AE003"},
-		{"closed status", "clock_timestamp() - interval '1 minute'", "clock_timestamp() + interval '1 hour'", true, "AE001"},
+		// A closed auction has always ended (AE012), so this also shows the
+		// status check runs before the time check.
+		{"closed status", "clock_timestamp() - interval '2 hours'", "clock_timestamp() - interval '1 hour'", true, "AE001"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -364,7 +424,7 @@ func TestBidGuardTimeWindowAndStatus(t *testing.T) {
 			ctx := t.Context()
 			a := f.newAuction(t, tt.start, tt.end)
 			if tt.closed {
-				if _, err := f.pool.Exec(ctx, `UPDATE auctions SET status = 'closed' WHERE id = $1`, a); err != nil {
+				if err := f.closeAuction(ctx, a); err != nil {
 					t.Fatalf("close auction: %v", err)
 				}
 			}
