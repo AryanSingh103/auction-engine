@@ -160,7 +160,7 @@ Database error codes: the guard trigger raises `AE001`–`AE006` and the deferre
 - `AE013`: close without its event fails at commit
 - `AE014`: no close event for an open auction
 - `AE015`: an invoice must match the closed result
-- `AE016`: invoice status only moves pending→paid, pending→failed, or failed→pending, and invoices are never deleted
+- `AE016`: invoice status only moves pending→paid or pending→failed (both final; migration 15), and invoices are never deleted
 
 `internal/invariants` has a `SafetyMode` (holds at every instant) and a `DrainedMode` (it also checks the eventual settlement properties, so use it only once nothing is in flight).
 

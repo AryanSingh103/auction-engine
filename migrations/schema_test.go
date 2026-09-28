@@ -695,15 +695,9 @@ func TestInvoiceLifecycle(t *testing.T) {
 	wantPgError(t, exec(`UPDATE invoices SET status = 'paid', payment_id = 'ch_1' WHERE id = $1`),
 		"23514", "invoices_settled_when_not_pending")
 
-	// pending -> failed -> pending (a replay) -> paid.
-	for _, sql := range []string{
-		`UPDATE invoices SET status = 'failed', failure = 'provider down', settled_at = clock_timestamp() WHERE id = $1`,
-		`UPDATE invoices SET status = 'pending', failure = NULL, settled_at = NULL WHERE id = $1`,
-		`UPDATE invoices SET status = 'paid', payment_id = 'ch_1', settled_at = clock_timestamp() WHERE id = $1`,
-	} {
-		if err := exec(sql); err != nil {
-			t.Fatalf("%s: %v", sql, err)
-		}
+	// pending -> paid.
+	if err := exec(`UPDATE invoices SET status = 'paid', payment_id = 'ch_1', settled_at = clock_timestamp() WHERE id = $1`); err != nil {
+		t.Fatalf("pay: %v", err)
 	}
 
 	// paid is final, and invoices are never deleted.
@@ -712,4 +706,21 @@ func TestInvoiceLifecycle(t *testing.T) {
 	wantPgError(t, exec(`DELETE FROM invoices WHERE id = $1`), "AE016", "")
 	_, err = f.pool.Exec(ctx, `TRUNCATE invoices`)
 	wantPgError(t, err, "AE016", "")
+
+	// pending -> failed, and failed is final too.
+	b, _, winning := f.endedWithBids(t)
+	declined, err := f.insertInvoice(ctx, b, winning, f.users[1], 1100)
+	if err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+	if _, err := f.pool.Exec(ctx, `UPDATE invoices SET status = 'failed', failure = 'declined', settled_at = clock_timestamp() WHERE id = $1`, declined); err != nil {
+		t.Fatalf("decline: %v", err)
+	}
+	for _, sql := range []string{
+		`UPDATE invoices SET status = 'pending', failure = NULL, settled_at = NULL WHERE id = $1`,
+		`UPDATE invoices SET status = 'paid', failure = NULL, payment_id = 'ch_2' WHERE id = $1`,
+	} {
+		_, err := f.pool.Exec(ctx, sql, declined)
+		wantPgError(t, err, "AE016", "")
+	}
 }
