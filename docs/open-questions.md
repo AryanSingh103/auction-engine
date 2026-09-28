@@ -110,3 +110,12 @@ In M2's hot-auction runs, 73–98% of bids were "too low". The pessimistic path 
 - **SSM access to instances.** Attach `AmazonSSMManagedInstanceCore` to the instance role, for Session Manager access without SSH or any inbound port. It runs over the existing 443 egress. Consider ECS Exec as well.
 - **`drop_invalid_header_fields = true` on the ALB.** ADR 010 trusts an identity header, so the ALB should drop malformed header fields instead of forwarding them.
 - **IAM propagation on a fresh account.** The first apply failed because the AutoScaling service-linked role was created 5s before the first launch. The role now exists in this account. Do not add an `aws_iam_service_linked_role` resource for it: creating it would fail because it already exists.
+
+## R19. Findings from the M4 review deferred to later milestones
+- **Pin `end_at` (M5, must fix).** The schema cannot yet stop an early close:
+  - there is no INSERT guard, so a row can be created already `closed`
+  - `UPDATE … SET end_at = <past>` followed by a close gets around AE012
+
+  M5's anti-snipe work should let `end_at` only grow while an auction is open and freeze it at close. The audit should also compare each `auction_closed` event's `created_at` with `end_at`.
+- **Late marks after a rebalance (low).** A settler that finishes a record from a partition just revoked from it can commit an older offset under its still-valid generation. The events after it are redelivered. That's safe (`Settle` is idempotent) but wasted work, and it can double-count dead letters. Fix: skip the records of revoked or lost partitions using `OnPartitionsRevoked`/`OnPartitionsLost`.
+- **Relay duplicates after an idle-in-transaction kill.** The window is now bounded (produce timeouts below the publish timeout), but it can't be closed completely, so every consumer must drop event ids it has already passed (ADR 022). Settlement is per-auction idempotent, so it is unaffected.

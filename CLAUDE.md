@@ -168,11 +168,19 @@ Database error codes: the guard trigger raises `AE001`–`AE006` and the deferre
 
 ## Current status
 
-**Milestone 3.5 is complete (2026-09-27).** A throwaway Terraform stack (`deploy/terraform/trial/`, ADR 021) served `/healthz` on ECS-on-EC2 behind an ALB in us-east-2 (account 332252068710). It was verified through the ALB and in CloudWatch, then destroyed, and a direct check found nothing billable left. The review's real findings are fixed. The biggest was that `SHUTDOWN_TIMEOUT` did not bound the whole shutdown (fixed in `cmd/api`, ADR 003). Items deferred to M6 are in R18, including draining through a capacity provider. Interview questions for M0–M3.5 are in `docs/interview/`.
+**Milestone 4 is complete (2026-09-28).** Built in M4 (ADRs 022–025):
+- the outbox relay to Redpanda
+- `CloseAuction` with schema guards AE012–AE016
+- invoices
+- the flaky payment simulator
+- settlement: charge once, retries, circuit breaker, dead-letter topic
+- saturation-based load shedding
+- invariant 5 audits (safety and drained)
+- worker metrics and dashboard panels
 
-M3 left a **must-fix for M5: the cache version ignores `end_at`** (R17). R15 and R16 are also still open.
+The review's real findings are fixed; the deferred ones are in R19, including a **must-fix for M5: pin `end_at`**. **Waiting for the owner:** ADR 025 dropped the lag-based relay throttle from the chosen R4 option. Still open: R15, R16, R17 (including the M5 must-fix: the cache version ignores `end_at`). Interview questions for M0–M4 are in `docs/interview/`.
 
-**Next: M4** (Redpanda, transactional outbox, settlement consumer).
+**Next: M5** (closer worker, advisory-lock leader election, anti-snipe, the close-vs-bid race).
 
 Notes for whoever picks this up:
 - **`README.md` runs ahead of the code.** At the owner's request (2026-09-25) it describes the finished system: the outbox publisher, settlement, the closer, load shedding, the AWS deploy and fault injection are written up as done, although they are M4–M7 work. Use this status section and `docs/open-questions.md` for what is actually built; never treat the README as evidence that something exists. Its only numbers are real M2 benchmark results, and it must never gain invented ones.
