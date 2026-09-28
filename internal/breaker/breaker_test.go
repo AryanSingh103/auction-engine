@@ -120,3 +120,20 @@ func TestOneTrialUnderConcurrency(t *testing.T) {
 		t.Fatalf("%d calls allowed while half-open, want 1", n)
 	}
 }
+
+// A trial that ends without an outcome frees the half-open slot.
+func TestReleaseFreesTheTrial(t *testing.T) {
+	b, c, _ := newTest(1)
+	call(t, b, false)
+	c.advance(10 * time.Second)
+	if err := b.Allow(); err != nil {
+		t.Fatalf("trial Allow = %v", err)
+	}
+	b.Release()
+	if err := b.Allow(); err != nil {
+		t.Fatalf("Allow after Release = %v, want the next trial allowed", err)
+	}
+	if b.State() != HalfOpen {
+		t.Errorf("state = %s, want still half-open (no outcome was recorded)", b.State())
+	}
+}

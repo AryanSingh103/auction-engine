@@ -186,9 +186,12 @@ func (s *Settler) charge(ctx context.Context, key string, amount, customer int64
 		default:
 			s.obs.PaymentAttempt("rejected")
 		}
-		// Our own shutdown is not the provider's fault.
+		// Our own shutdown is not the provider's fault: release the call
+		// without an outcome instead of recording one.
 		if ctx.Err() == nil {
 			s.breaker.Record(!unknown)
+		} else {
+			s.breaker.Release()
 		}
 		if !unknown {
 			return id, err

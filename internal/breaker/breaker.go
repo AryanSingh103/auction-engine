@@ -113,6 +113,18 @@ func (b *Breaker) Record(success bool) {
 	}
 }
 
+// Release gives back an allowed call that ended without saying anything
+// about the dependency (the caller's own context was cancelled). A
+// half-open trial is freed for the next caller; otherwise the breaker would
+// refuse every call forever (found by the M4 review).
+func (b *Breaker) Release() {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.state == HalfOpen {
+		b.trialOut = false
+	}
+}
+
 // State returns the current state (Open even if OpenFor has passed, until
 // the next Allow moves it to half-open).
 func (b *Breaker) State() State {
