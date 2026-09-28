@@ -189,6 +189,43 @@ services:
       postgres:
         condition: service_healthy
 
+  # Settlement consumer (docs/decisions/024). Two members of one consumer
+  # group, so partitions are shared and a rebalance happens whenever one
+  # stops: redelivery is always exercised locally.
+  settler: &settler
+    build: .
+    entrypoint: ["/settler"]
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:?set LOG_LEVEL in .env}
+      DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?sslmode=disable
+      DB_IDLE_IN_TX_TIMEOUT: ${DB_IDLE_IN_TX_TIMEOUT:?set DB_IDLE_IN_TX_TIMEOUT in .env}
+      KAFKA_BROKERS: redpanda:9092
+      OUTBOX_TOPIC: ${OUTBOX_TOPIC:?set OUTBOX_TOPIC in .env}
+      SETTLEMENT_GROUP: ${SETTLEMENT_GROUP:?set SETTLEMENT_GROUP in .env}
+      SETTLEMENT_DLQ_TOPIC: ${SETTLEMENT_DLQ_TOPIC:?set SETTLEMENT_DLQ_TOPIC in .env}
+      KAFKA_REPLICATION_FACTOR: ${KAFKA_REPLICATION_FACTOR:?set KAFKA_REPLICATION_FACTOR in .env}
+      SETTLEMENT_RETRY_INTERVAL: ${SETTLEMENT_RETRY_INTERVAL:?set SETTLEMENT_RETRY_INTERVAL in .env}
+      PAYSIM_URL: http://paysim:8090
+      PAYMENT_TIMEOUT: ${PAYMENT_TIMEOUT:?set PAYMENT_TIMEOUT in .env}
+      PAYMENT_MAX_ATTEMPTS: ${PAYMENT_MAX_ATTEMPTS:?set PAYMENT_MAX_ATTEMPTS in .env}
+      PAYMENT_BACKOFF_BASE: ${PAYMENT_BACKOFF_BASE:?set PAYMENT_BACKOFF_BASE in .env}
+      PAYMENT_BACKOFF_CAP: ${PAYMENT_BACKOFF_CAP:?set PAYMENT_BACKOFF_CAP in .env}
+      BREAKER_FAILURE_THRESHOLD: ${BREAKER_FAILURE_THRESHOLD:?set BREAKER_FAILURE_THRESHOLD in .env}
+      BREAKER_OPEN_DURATION: ${BREAKER_OPEN_DURATION:?set BREAKER_OPEN_DURATION in .env}
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redpanda:
+        condition: service_healthy
+      paysim:
+        condition: service_started
+
+  settler2:
+    <<: *settler
+
   # A second API instance, so cross-instance behavior (Redis pub/sub
   # fan-out, the shared rate-limit buckets, the shared cache) is exercised
   # locally. Same configuration; only the host port differs. In M6 both sit
