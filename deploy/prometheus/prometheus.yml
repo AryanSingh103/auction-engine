@@ -18,3 +18,8 @@ scrape_configs:
   - job_name: settler
     static_configs:
       - targets: ["settler:9091", "settler2:9091"]
+
+  # M5: one of the two leads at a time (closer_is_leader).
+  - job_name: closer
+    static_configs:
+      - targets: ["closer:9091", "closer2:9091"]

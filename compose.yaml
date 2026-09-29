@@ -173,6 +173,29 @@ services:
   relay2:
     <<: *relay
 
+  # Closes ended auctions (docs/decisions/027). Two copies: one leads by
+  # advisory lock, the other takes over if its session ends.
+  closer: &closer
+    build: .
+    entrypoint: ["/closer"]
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:?set LOG_LEVEL in .env}
+      # Scraped by Prometheus inside the network; not published.
+      METRICS_ADDR: ":9091"
+      DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?sslmode=disable
+      DB_IDLE_IN_TX_TIMEOUT: ${DB_IDLE_IN_TX_TIMEOUT:?set DB_IDLE_IN_TX_TIMEOUT in .env}
+      CLOSER_INTERVAL: ${CLOSER_INTERVAL:?set CLOSER_INTERVAL in .env}
+      CLOSER_BATCH_SIZE: ${CLOSER_BATCH_SIZE:?set CLOSER_BATCH_SIZE in .env}
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  closer2:
+    <<: *closer
+
   # Fake payment provider (docs/decisions/023): fails, loses responses and
   # hangs on purpose. Only settlement talks to it; not published to the host.
   paysim:

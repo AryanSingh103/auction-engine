@@ -37,7 +37,7 @@ migrate-status: ## Show applied and pending migrations (host)
 
 .PHONY: build
 build: ## Build the api, migrate and loadgen binaries into bin/
-	go build -o bin/ ./cmd/api ./cmd/migrate ./cmd/loadgen
+	go build -o bin/ ./cmd/...
 
 .PHONY: test
 test: ## Run all tests

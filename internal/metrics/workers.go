@@ -210,3 +210,48 @@ func (q *queryGauges) Collect(ch chan<- prometheus.Metric) {
 	}
 	q.errors.Collect(ch)
 }
+
+// Closer implements closer.Observer.
+type Closer struct {
+	leader prometheus.Gauge
+	closes *prometheus.CounterVec
+	lag    prometheus.Histogram
+}
+
+// NewCloser registers the closer's metrics.
+func NewCloser(r WorkerRegistry) *Closer {
+	m := &Closer{
+		leader: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: "closer_is_leader",
+			Help: "1 while this closer holds the leader lock. Summed across closers it should be 1.",
+		}),
+		closes: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "closer_closes_total",
+			Help: "Close attempts by result: closed, already (closed by someone else), extended (anti-snipe moved the end after the scan), error.",
+		}, []string{"result"}),
+		lag: prometheus.NewHistogram(prometheus.HistogramOpts{
+			Name:    "closer_close_lag_seconds",
+			Help:    "Time from an auction's end_at to this closer closing it.",
+			Buckets: prometheus.ExponentialBuckets(0.01, 2, 12), // 10ms .. ~20s
+		}),
+	}
+	r.MustRegister(m.leader, m.closes, m.lag)
+	return m
+}
+
+// Leader implements closer.Observer.
+func (m *Closer) Leader(leading bool) {
+	if leading {
+		m.leader.Set(1)
+	} else {
+		m.leader.Set(0)
+	}
+}
+
+// Closed implements closer.Observer.
+func (m *Closer) Closed(result string, lag time.Duration) {
+	m.closes.WithLabelValues(result).Inc()
+	if result == "closed" {
+		m.lag.Observe(lag.Seconds())
+	}
+}

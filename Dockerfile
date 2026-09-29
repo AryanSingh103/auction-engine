@@ -23,7 +23,7 @@ ARG TARGETOS TARGETARCH
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
     CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
-    go build -trimpath -ldflags="-s -w" -o /out/ ./cmd/api ./cmd/migrate ./cmd/loadgen ./cmd/relay ./cmd/paysim ./cmd/settler
+    go build -trimpath -ldflags="-s -w" -o /out/ ./cmd/api ./cmd/migrate ./cmd/loadgen ./cmd/relay ./cmd/paysim ./cmd/settler ./cmd/closer
 
 # ---- runtime stage --------------------------------------------------------
 # distroless/static: CA certificates, tzdata and a nonroot user, but no shell
@@ -31,13 +31,14 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 FROM gcr.io/distroless/static-debian13:nonroot
 # One image, several entrypoints: the API (default), the one-shot migrate
 # command, the load generator, the outbox relay, the payment simulator and
-# the settler (compose overrides the entrypoint).
+# the settler and the closer (compose overrides the entrypoint).
 COPY --from=build /out/api /api
 COPY --from=build /out/migrate /migrate
 COPY --from=build /out/loadgen /loadgen
 COPY --from=build /out/relay /relay
 COPY --from=build /out/paysim /paysim
 COPY --from=build /out/settler /settler
+COPY --from=build /out/closer /closer
 USER nonroot:nonroot
 EXPOSE 8080
 # Exec form: the binary is PID 1 and receives SIGTERM from `docker stop`
