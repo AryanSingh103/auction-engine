@@ -119,3 +119,10 @@ In M2's hot-auction runs, 73–98% of bids were "too low". The pessimistic path 
   M5's anti-snipe work should let `end_at` only grow while an auction is open and freeze it at close. The audit should also compare each `auction_closed` event's `created_at` with `end_at`.
 - **Late marks after a rebalance (low).** A settler that finishes a record from a partition just revoked from it can commit an older offset under its still-valid generation. The events after it are redelivered. That's safe (`Settle` is idempotent) but wasted work, and it can double-count dead letters. Fix: skip the records of revoked or lost partitions using `OnPartitionsRevoked`/`OnPartitionsLost`.
 - **Relay duplicates after an idle-in-transaction kill.** The window is now bounded (produce timeouts below the publish timeout), but it can't be closed completely, so every consumer must drop event ids it has already passed (ADR 022). Settlement is per-auction idempotent, so it is unaffected.
+
+## R20. Deferred from M5
+- **The M5 adversarial review has not run.** It was deferred at the owner's request, and M5 is not done until it runs and its real findings are fixed.
+- **The closer has no Redis.** After a close, `GET /auctions/{id}` can show "open" for up to `AUCTION_CACHE_TTL`, and live clients get no close message. Bids are refused regardless. Fix: give the closer the cache and the publisher, as the API has them.
+- **No Grafana panels for the closer yet.** `closer_is_leader`, `closer_closes_total` and `closer_close_lag_seconds` are scraped but not charted.
+- **Close lag is measured on the closer's clock** against the database's `end_at`, so clock skew shows up in it. `closed_at - end_at` in SQL is the exact figure.
+- **No load run with the closer.** `make bench-smoke` and the invariant checker after a load run have not been rerun since M5.

@@ -109,6 +109,7 @@ Run `make help` for the full list. The ones you'll use most:
   - `relay` + `relay2`: the outbox publishers (one batch at a time, whoever holds the lock)
   - `settler` + `settler2`: one settlement consumer group
   - `paysim`: the flaky payment provider, internal only
+  - `closer` + `closer2` (M5): one leads by advisory lock and closes ended auctions
 - **Inspect Kafka:** `docker compose exec redpanda rpk topic consume auction-events -o start`. The dead-letter topic is `settlement-dlq`.
 - **Observability:**
   - Grafana at `http://localhost:3000`. Dashboards are viewable without login; admin credentials are in `.env`.
@@ -150,7 +151,12 @@ CI (`.github/workflows/ci.yml`) runs lint, `make fmt-check vet test-race` and an
   - `internal/paysim` + `cmd/paysim`: the fake provider, with durable idempotency and injected faults (ADR 023).
   - `internal/settlement` + `cmd/settler`: invoice, charge once, retry unknown outcomes, dead-letter (ADR 024). `internal/breaker`: the circuit breaker.
   - `internal/httpapi/shed.go`: bid load shedding (ADR 025).
-  - `internal/metrics/workers.go`: the relay's and settler's metrics.
+  - `internal/metrics/workers.go`: the relay's, settler's and closer's metrics.
+- **Closer and anti-snipe (M5):**
+  - `internal/closer` + `cmd/closer`: session advisory-lock leader on a hijacked connection; closes via `CloseAuction` (ADR 027). Leadership is only an optimization: closing is safe under split brain.
+  - Anti-snipe is per auction (`extend_window`, `extend_by`), applied in `writeBid`'s head UPDATE and checked exactly by the update guard (ADR 026).
+  - `auctions.version` is bumped by the trigger on every update and is the cache version. `closed_at` is set by the trigger.
+  - `internal/auction/race_test.go`: the close-vs-bid race proofs. `testdb.EndAuctionNow` is the only way a fixture may end an auction early.
 - `internal/testdb/`: testcontainers harness. One container per test binary, and a fresh database cloned from a migrated template per test.
 - `docs/decisions/`: ADRs, numbered `NNN-short-title.md`. `docs/open-questions.md`: spec gaps and risks R1–R18. `docs/interview/`: interview questions for M0–M4 (no longer generated).
 
@@ -161,25 +167,26 @@ Database error codes: the guard trigger raises `AE001`–`AE006` and the deferre
 - `AE015`: an invoice must match the closed result
 - `AE016`: invoice status only moves pending→paid or pending→failed (both final; migration 15), and invoices are never deleted
 
+M5 adds (migration 16):
+- `AE017`: a new auction starts open, headless, at version 0
+- `AE018`: `end_at` only moves by the anti-snipe rule, with a new head
+- `AE019`: a closed auction never changes; an auction's terms never change
+
 `internal/invariants` has a `SafetyMode` (holds at every instant) and a `DrainedMode` (it also checks the eventual settlement properties, so use it only once nothing is in flight).
 
 **Lock order:** always lock the auction row first. Every path that touches several of auctions, users, bids and outbox must follow it (R14).
 
 ## Current status
 
-**Milestone 4 is complete (2026-09-28).** Built in M4 (ADRs 022–025):
-- the outbox relay to Redpanda
-- `CloseAuction` with schema guards AE012–AE016
-- invoices
-- the flaky payment simulator
-- settlement: charge once, retries, circuit breaker, dead-letter topic
-- saturation-based load shedding
-- invariant 5 audits (safety and drained)
-- worker metrics and dashboard panels
+**Milestone 5 work is built (2026-09-28); its adversarial review has not run yet.** At the owner's request (usage limits), the review was deferred to a later session. Run it before calling M5 done. Built in M5 (ADRs 026–027):
+- migration 16: pinned `end_at`, anti-snipe, the row version (resolving the R17 and R19 must-fixes), and guards AE017–AE019
+- the closer worker with advisory-lock leader election (two copies in compose)
+- the close-vs-bid race proofs, under both locking strategies
+- the close-time invariant audit
 
-The review's real findings are fixed; the deferred ones are in R19, including a **must-fix for M5: pin `end_at`**. **Waiting for the owner:** ADR 025 dropped the lag-based relay throttle from the chosen R4 option. Still open: R15, R16, R17 (including the M5 must-fix: the cache version ignores `end_at`). Interview questions for M0–M4 are in `docs/interview/`.
+Deferred items are in R20. **Waiting for the owner:** ADR 025 dropped the lag-based relay throttle from the chosen R4 option. Still open: R15, R16, R17 (the rest), R19 (the rest), R20. Interview questions for M0–M4 are in `docs/interview/`.
 
-**Next: M5** (closer worker, advisory-lock leader election, anti-snipe, the close-vs-bid race).
+**Next:** the M5 adversarial review, then M6.
 
 Notes for whoever picks this up:
 - **`README.md` runs ahead of the code.** At the owner's request (2026-09-25) it describes the finished system: the outbox publisher, settlement, the closer, load shedding, the AWS deploy and fault injection are written up as done, although they are M4–M7 work. Use this status section and `docs/open-questions.md` for what is actually built; never treat the README as evidence that something exists. Its only numbers are real M2 benchmark results, and it must never gain invented ones.
